@@ -122,7 +122,7 @@ def train_lgb_cv(df, features, target='price', n_splits=5):
             valid_sets=[train_data, val_data],
             callbacks=[
                 lgb.early_stopping(stopping_rounds=50),
-                lgb.log_evaluation(period=100)
+                lgb.log_evaluation(period=0)  # Suppress iteration logs
             ]
         )
         
@@ -133,12 +133,13 @@ def train_lgb_cv(df, features, target='price', n_splits=5):
         # Calculate SMAPE for this fold
         fold_smape = smape(y_val, val_pred)
         fold_scores.append(fold_smape)
-        
-        print(f"\nFold {fold} SMAPE: {fold_smape:.4f}%")
+        print(f"Fold {fold}: {fold_smape:.2f}%", end="  ")
         
         # Accumulate feature importance
         for i, feat in enumerate(features):
             feature_importance[feat] += model.feature_importance()[i]
+    
+    print()  # Newline after all folds
     
     # Average feature importance across folds
     feature_importance = {k: v/n_splits for k, v in feature_importance.items()}
@@ -147,37 +148,33 @@ def train_lgb_cv(df, features, target='price', n_splits=5):
 
 
 def print_results(df, oof_preds, feature_importance, fold_scores, experiment_name):
-    """Print experiment results with reasoning"""
-    print(f"\n{'='*80}")
-    print(f"EXPERIMENT: {experiment_name}")
-    print(f"{'='*80}\n")
+    """Print experiment results - COMPACT FORMAT"""
+    print(f"\n{'='*70}")
+    print(f"EXP: {experiment_name}")
+    print(f"{'='*70}")
     
     # Overall SMAPE
     overall_smape = smape(df['price'].values, oof_preds)
-    print(f"Overall OOF SMAPE: {overall_smape:.4f}%")
-    print(f"Fold scores: {[f'{s:.4f}%' for s in fold_scores]}")
-    print(f"Std dev: {np.std(fold_scores):.4f}%\n")
+    print(f"OOF SMAPE: {overall_smape:.2f}%  |  Folds: {[f'{s:.2f}' for s in fold_scores]}  |  Std: {np.std(fold_scores):.2f}%")
     
     # SMAPE by segment
     df_eval = df.copy()
     df_eval['pred'] = oof_preds
     segment_smapes = smape_by_segment(df_eval)
     
-    print("SMAPE by Price Segment:")
-    print("-" * 50)
+    print("\nBy Segment:", end="  ")
     for segment, seg_smape in segment_smapes.items():
         count = (df['price_segment'] == segment).sum()
         pct = count / len(df) * 100
-        print(f"  {segment:12s}: {seg_smape:6.2f}%  (n={count:,}, {pct:.1f}% of data)")
+        print(f"{segment}: {seg_smape:.2f}% ({pct:.0f}%)", end="  ")
     
-    # Feature importance
-    print("\nTop 10 Feature Importances:")
-    print("-" * 50)
+    # Feature importance - Top 5 only
+    print(f"\n\nTop 5 Features:", end="  ")
     sorted_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
-    for i, (feat, imp) in enumerate(sorted_features[:10], 1):
-        print(f"  {i:2d}. {feat:20s}: {imp:8.1f}")
+    for feat, imp in sorted_features[:5]:
+        print(f"{feat}({imp:.0f})", end="  ")
     
-    print(f"\n{'='*80}\n")
+    print(f"\n{'='*70}\n")
     
     return overall_smape, segment_smapes
 
@@ -194,17 +191,11 @@ def print_results(df, oof_preds, feature_importance, fold_scores, experiment_nam
 
 def experiment_1_ipq_only():
     """Baseline: IPQ only"""
-    print("\n" + "="*80)
-    print("EXPERIMENT 1: IPQ ONLY (value + unit)")
-    print("="*80)
-    print("\nREASONING:")
-    print("- EDA showed value/unit in 84.8% of products (63,600 / 75,000)")
-    print("- Quantity is a strong price signal (12oz vs 48oz)")
-    print("- This validates if IPQ alone is sufficient")
-    print("- Expected: 15-18% SMAPE (baseline to beat)")
-    print("\n")
+    print("\n" + "="*70)
+    print("EXP 1: IPQ ONLY (value + unit) - Expected: 16-19% SMAPE")
+    print("="*70)
     
-    df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv')
+    df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv', low_memory=False)
     
     features = ['value', 'unit']  # IPQ = Item-Pack-Quantity
     
@@ -230,18 +221,11 @@ def experiment_1_ipq_only():
 
 def experiment_2_ipq_plus_quality():
     """IPQ + Quality keywords"""
-    print("\n" + "="*80)
-    print("EXPERIMENT 2: IPQ + QUALITY KEYWORDS")
-    print("="*80)
-    print("\nREASONING:")
-    print("- EDA showed products with quality keywords → +46% price premium")
-    print("- Coverage: Premium 18%, Organic 12%, Gourmet 8%, Natural 7%, etc")
-    print("- Binary flags (0/1) easy for tree model to split on")
-    print("- Hypothesis: Keywords segment products into price tiers")
-    print("- Expected improvement: 2-3% SMAPE reduction")
-    print("\n")
+    print("\n" + "="*70)
+    print("EXP 2: IPQ + QUALITY - Expected: 14-17% SMAPE")
+    print("="*70)
     
-    df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv')
+    df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv', low_memory=False)
     
     features = [
         'value', 'unit',  # IPQ = Item-Pack-Quantity
@@ -272,19 +256,11 @@ def experiment_2_ipq_plus_quality():
 
 def experiment_3_ipq_quality_brand():
     """IPQ + Quality + Brand"""
-    print("\n" + "="*80)
-    print("EXPERIMENT 3: IPQ + QUALITY + BRAND")
-    print("="*80)
-    print("\nREASONING:")
-    print("- Brand extracted for 77.1% of products (57,846 / 75,000)")
-    print("- Different brands have different pricing strategies")
-    print("- Examples: Premium brands (Walden Farms), Budget brands")
-    print("- Hypothesis: Brand captures manufacturer price positioning")
-    print("- Challenge: High cardinality (many unique brands)")
-    print("- Expected improvement: 1-2% SMAPE reduction")
-    print("\n")
+    print("\n" + "="*70)
+    print("EXP 3: IPQ + QUALITY + BRAND - Expected: 13-15% SMAPE")
+    print("="*70)
     
-    df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv')
+    df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv', low_memory=False)
     
     features = [
         'value', 'unit',  # IPQ = Item-Pack-Quantity
@@ -313,24 +289,19 @@ def experiment_3_ipq_quality_brand():
 # ============================================================================
 
 def experiment_4_full_tabular():
-    """IPQ + Quality + Brand + Pack Size"""
-    print("\n" + "="*80)
-    print("EXPERIMENT 4: IPQ + QUALITY + BRAND + PACK SIZE")
-    print("="*80)
-    print("\nREASONING:")
-    print("- Add pack_size: bulk purchases → lower per-unit price")
-    print("- Removed weak text features (r=0.14, added noise)")
-    print("- Hypothesis: Pack size captures bulk pricing patterns")
-    print("- Expected improvement: 0.5-1% SMAPE reduction")
-    print("\n")
+    """IPQ + Quality + Brand + Pack + Size Signals"""
+    print("\n" + "="*70)
+    print("EXP 4: FULL FEATURES (+ pack_size, is_bulk, is_travel_size)")
+    print("="*70)
     
-    df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv')
+    df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv', low_memory=False)
     
     features = [
         'value', 'unit', 'pack_size',  # IPQ + bulk indicator
         'has_premium', 'has_organic', 'has_gourmet',
         'has_natural', 'has_artisan', 'has_luxury',
-        'brand'
+        'brand',
+        'is_travel_size', 'is_bulk'  # Size category signals
         # Removed text features: text_length, word_count, has_bullets, num_bullets
         # Reason: Weak correlation (r=0.14), added noise in previous run
     ]
@@ -349,13 +320,9 @@ def experiment_4_full_tabular():
 # ============================================================================
 
 if __name__ == '__main__':
-    print("\n" + "="*80)
-    print("BASELINE MODEL - INCREMENTAL FEATURE VALIDATION")
-    print("="*80)
-    print("\nObjective: Validate hypotheses from EDA")
-    print("Approach: Start simple, add features incrementally")
-    print("Metric: SMAPE (lower is better)")
-    print("\n")
+    print("\n" + "="*70)
+    print("BASELINE #5: IPQ + Quality + Brand + Size Signals")
+    print("="*70 + "\n")
     
     results = {}
     
@@ -366,43 +333,29 @@ if __name__ == '__main__':
     results['full_tabular'] = experiment_4_full_tabular()
     
     # Summary
-    print("\n" + "="*80)
-    print("SUMMARY OF ALL EXPERIMENTS")
-    print("="*80)
-    print(f"\n{'Experiment':<30} {'SMAPE':<10} {'Improvement':<15}")
-    print("-" * 60)
+    print("\n" + "="*70)
+    print("SUMMARY")
+    print("="*70)
     
     baseline = results['ipq_only']
-    print(f"{'1. IPQ Only':<30} {baseline:>6.2f}%  {'(baseline)':<15}")
+    print(f"Exp 1 (IPQ):          {baseline:.2f}% (baseline)")
     
     for name, smape in list(results.items())[1:]:
         improvement = baseline - smape
         improvement_pct = (improvement / baseline) * 100
         display_name = name.replace('_', ' ').title()
-        print(f"{display_name:<30} {smape:>6.2f}%  {improvement:>+5.2f}% ({improvement_pct:>+4.1f}%)")
+        print(f"{display_name:<20}: {smape:>5.2f}%  ({improvement:>+4.2f}% / {improvement_pct:>+4.1f}%)")
     
-    print("\n" + "="*80)
-    print("\nKEY INSIGHTS:")
-    print("1. Which features contribute most to prediction?")
-    print("2. Is Budget segment (<$10) the main error contributor?")
-    print("3. Is IPQ alone sufficient, or do we need text/image embeddings?")
-    print("4. What's the best SMAPE we can achieve with simple features?")
-    print("\n")
-    
-    # Decision point
     best_smape = min(results.values())
-    print(f"Best baseline SMAPE: {best_smape:.2f}%")
-    print("\nDECISION TREE:")
-    if best_smape < 13:
-        print("✅ Strong baseline (<13%) → Can try text/image embeddings for marginal gains")
-    elif best_smape < 15:
-        print("⚠️ Moderate baseline (13-15%) → Text embeddings may help, reconsider image cost")
-    else:
-        print("🔴 Weak baseline (>15%) → Debug features, check for data leakage, tune hyperparams")
+    print(f"\n✨ Best: {best_smape:.2f}% SMAPE")
     
-    print("\nNEXT STEPS:")
-    print("1. Analyze feature importance → Which features matter most?")
-    print("2. Check Budget segment errors → Is it the main contributor?")
-    print("3. Decide: Add text embeddings? (30-40 min)")
+    if best_smape < 13:
+        print("→ STRONG! Try TF-IDF on bullets next")
+    elif best_smape < 15:
+        print("→ GOOD. Try TF-IDF or tune hyperparams")
+    else:
+        print("→ DEBUG: Check categorical encoding, unit cardinality")
+    
+    print("="*70 + "\n")
     print("4. Decide: Add image embeddings? (60-90 min)")
     print("5. Optimize hyperparameters if needed")

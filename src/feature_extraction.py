@@ -270,6 +270,16 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     print("Extracting pack size...")
     df['pack_size'] = df['catalog_content'].apply(extract_pack_size)
     
+    # Extract size category signals
+    print("Extracting size categories...")
+    df['is_travel_size'] = df['catalog_content'].str.contains(
+        'travel size|sample|trial|mini', case=False, na=False
+    ).astype(int)
+    
+    df['is_bulk'] = df['catalog_content'].str.contains(
+        'bulk|wholesale|case of', case=False, na=False
+    ).astype(int)
+    
     # Extract text features
     print("Extracting text features...")
     text_features = df['catalog_content'].apply(extract_text_features)
