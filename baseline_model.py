@@ -206,12 +206,12 @@ def experiment_1_ipq_only():
     
     df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv')
     
-    features = ['value']  # Just numeric value (unit will be categorical, skip for now)
+    features = ['value', 'unit']  # IPQ = Item-Pack-Quantity
     
     oof_preds, feat_imp, fold_scores = train_lgb_cv(df, features)
     overall_smape, segment_smapes = print_results(
         df, oof_preds, feat_imp, fold_scores,
-        "IPQ Only (value)"
+        "IPQ Only (value+unit)"
     )
     
     return overall_smape
@@ -303,41 +303,42 @@ def experiment_3_ipq_quality_brand():
 
 
 # ============================================================================
-# EXPERIMENT 4: Full Tabular Features
+# EXPERIMENT 4: IPQ + QUALITY + BRAND + PACK SIZE
 # ============================================================================
 # REASONING:
-# - Add remaining text features: length, word_count, bullets, pack_size
-# - Hypothesis: More detailed descriptions → premium positioning
-# - Hypothesis: Pack size (bulk) → lower per-unit price
-# - Expected improvement: 0.5-1% SMAPE reduction (diminishing returns)
+# - Add pack_size: bulk purchases → lower per-unit price
+# - Removed weak text features (text_length r=0.14, added noise in run #4)
+# - Hypothesis: Pack size captures bulk pricing without description noise
+# - Expected improvement: 0.5-1% SMAPE reduction over Experiment 3
 # ============================================================================
 
 def experiment_4_full_tabular():
-    """All tabular features"""
+    """IPQ + Quality + Brand + Pack Size"""
     print("\n" + "="*80)
-    print("EXPERIMENT 4: FULL TABULAR FEATURES")
+    print("EXPERIMENT 4: IPQ + QUALITY + BRAND + PACK SIZE")
     print("="*80)
     print("\nREASONING:")
-    print("- Add text features: length, word_count, has_bullets, num_bullets")
     print("- Add pack_size: bulk purchases → lower per-unit price")
-    print("- Hypothesis: Description richness signals premium product")
-    print("- Expected improvement: 0.5-1% SMAPE reduction (diminishing returns)")
+    print("- Removed weak text features (r=0.14, added noise)")
+    print("- Hypothesis: Pack size captures bulk pricing patterns")
+    print("- Expected improvement: 0.5-1% SMAPE reduction")
     print("\n")
     
     df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv')
     
     features = [
-        'value', 'pack_size',
+        'value', 'unit', 'pack_size',  # IPQ + bulk indicator
         'has_premium', 'has_organic', 'has_gourmet',
         'has_natural', 'has_artisan', 'has_luxury',
-        'brand',
-        'text_length', 'word_count', 'has_bullets', 'num_bullets'
+        'brand'
+        # Removed text features: text_length, word_count, has_bullets, num_bullets
+        # Reason: Weak correlation (r=0.14), added noise in previous run
     ]
     
     oof_preds, feat_imp, fold_scores = train_lgb_cv(df, features)
     overall_smape, segment_smapes = print_results(
         df, oof_preds, feat_imp, fold_scores,
-        "Full Tabular Features"
+        "IPQ + Quality + Brand + Pack"
     )
     
     return overall_smape
