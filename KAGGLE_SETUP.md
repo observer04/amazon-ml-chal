@@ -33,22 +33,30 @@ python validation/phase1_complete.py
 - `dataset/train_80pct.csv` (~113 MB, 60k rows)
 - `dataset/holdout_20pct.csv` (~29 MB, 15k rows)
 
-### 4. **Download Images** ⏳ (1.5-2 hours)
+### 4. **Generate Image Embeddings** ⏳ (1-2 hours) - REVISED APPROACH
 ```bash
-# This downloads 150k images from Amazon CDN
-python download_images.py
+# This streams images and extracts embeddings (no disk storage!)
+# Only saves compact 512-dim embeddings (~300MB total)
+python generate_image_embeddings.py
 ```
 
 **Expected Output:**
-- `images/train/` (~7-10 GB, 75k images)
-- `images/test/` (~7-10 GB, 75k images)
+- `outputs/train_image_embeddings.npy` (~150 MB, 75k x 512 dims)
+- `outputs/test_image_embeddings.npy` (~150 MB, 75k x 512 dims)
 - Success rate: >90%
-- Failed downloads logged to `failed_downloads.txt`
+- No raw images saved (solved disk space issue!)
+
+**Why This Approach:**
+- ✅ Downloads images → extracts embeddings → discards images (all in memory)
+- ✅ 300MB output vs 40GB (133x smaller!)
+- ✅ Fits within Kaggle's 20GB output limit
+- ✅ Uses ResNet18 pretrained on ImageNet
+- ✅ Automatically cleans up any existing downloaded images
 
 **Resource Requirements:**
-- Disk space: ~20 GB total
-- Bandwidth: Good internet required
-- Time: 1.5-2 hours on P100 or 2xT4
+- GPU: P100 or 2xT4 (required)
+- Time: 1-2 hours
+- Internet: Required for streaming downloads
 
 ---
 
@@ -81,11 +89,10 @@ ls images/test/ | wc -l   # Should show ~75000
 **Phase 2 (Run on Kaggle):**
 - Generate features with `generate_features.py`
 - Create splits with `validation/phase1_complete.py`
-- Download images with `download_images.py`
+- Generate image embeddings with `generate_image_embeddings.py` (streaming, no disk storage!)
 
 **Phase 3-5 (Coming next):**
 - Generate text embeddings (sentence-transformers)
-- Generate image embeddings (ResNet18)
 - Train multi-modal ensemble
 - Submit predictions
 
@@ -96,7 +103,9 @@ ls images/test/ | wc -l   # Should show ~75000
 | File | Purpose | Size |
 |------|---------|------|
 | `generate_features.py` | Extract 30 features from catalog_content | - |
-| `download_images.py` | Download 150k images (100 workers) | - |
+| `generate_image_embeddings.py` | Stream images + extract ResNet18 embeddings | - |
+| `generate_text_embeddings.py` | Extract sentence-transformer embeddings | - |
+| `download_images.py` | ~~Download 150k images~~ (DEPRECATED - use streaming) | - |
 | `validation/phase1_complete.py` | Create 80/20 split | - |
 | `PROGRESS.md` | Full project status | - |
 | `todo.md` | Strategic decision tree (4 options) | - |
@@ -107,8 +116,9 @@ ls images/test/ | wc -l   # Should show ~75000
 ## ⚠️ Known Issues
 
 1. **Large CSV files not in git**: Regenerate with `generate_features.py`
-2. **Images take 1.5-2 hours**: Normal, be patient
-3. **Some images may fail**: Expected ~5% failure rate (dead links)
+2. **Disk space on Kaggle**: Solved! Use streaming approach with `generate_image_embeddings.py`
+3. **Old download_images.py hits 20GB limit**: Use new `generate_image_embeddings.py` instead
+4. **Some images may fail**: Expected ~5% failure rate (dead links, handled with zero vectors)
 
 ---
 
