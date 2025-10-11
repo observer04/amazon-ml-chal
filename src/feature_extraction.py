@@ -21,10 +21,11 @@ def parse_catalog_content(text: str) -> Dict[str, str]:
     Returns dict with keys:
     - item_name: Product name (if available)
     - bullets: List of bullet points
+    - all_bullets_text: Concatenated bullet text for embeddings
     - description: Detailed description (if available)
     """
     if pd.isna(text) or text.strip() == '':
-        return {'item_name': '', 'bullets': [], 'description': ''}
+        return {'item_name': '', 'bullets': [], 'all_bullets_text': '', 'description': ''}
     
     # Check if text contains bullet points
     bullet_pattern = r'(?:^|\n)\s*[-•*]\s*(.+?)(?=\n\s*[-•*]|\n\n|$)'
@@ -35,6 +36,7 @@ def parse_catalog_content(text: str) -> Dict[str, str]:
         return {
             'item_name': '',
             'bullets': [],
+            'all_bullets_text': '',
             'description': text.strip()
         }
     
@@ -69,9 +71,13 @@ def parse_catalog_content(text: str) -> Dict[str, str]:
     # Clean bullets
     bullets = [b.strip() for b in bullets if b.strip()]
     
+    # Concatenate all bullets for text embeddings
+    all_bullets_text = '\n'.join(bullets)
+    
     return {
         'item_name': item_name,
         'bullets': bullets,
+        'all_bullets_text': all_bullets_text,
         'description': description
     }
 
@@ -238,6 +244,7 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     parsed = df['catalog_content'].apply(parse_catalog_content)
     df['item_name'] = parsed.apply(lambda x: x['item_name'])
     df['description'] = parsed.apply(lambda x: x['description'])
+    df['all_bullets_text'] = parsed.apply(lambda x: x['all_bullets_text'])
     
     # Extract bullets as separate columns
     for i in range(MAX_BULLETS):
@@ -268,6 +275,9 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     text_features = df['catalog_content'].apply(extract_text_features)
     for key in ['text_length', 'word_count', 'has_bullets', 'num_bullets']:
         df[key] = text_features.apply(lambda x: x[key])
+    
+    # Add description length (just the description part, not entire catalog)
+    df['description_length'] = df['description'].fillna('').str.len()
     
     # Calculate price per unit (only for training data with 'price')
     if 'price' in df.columns:
