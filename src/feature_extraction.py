@@ -119,21 +119,41 @@ def extract_value_unit(text: str) -> Tuple[Optional[float], Optional[str]]:
 def extract_brand(text: str) -> str:
     """
     Extract brand name from catalog_content.
-    Heuristic: First capitalized word/phrase before comma or bullet
+    Handles format: "Item Name: BRAND PRODUCT DESCRIPTION..."
     """
     if pd.isna(text):
         return ''
     
-    # Try to find brand in first line
+    # Get first line
     first_line = text.split('\n')[0].strip()
     
-    # Pattern: Capitalized words at start
-    match = re.match(r'^([A-Z][a-zA-Z0-9\s&\'-]+?)(?:,|\s-\s|\n|$)', first_line)
+    # Strip "Item Name:" prefix if present
+    if first_line.startswith('Item Name:'):
+        first_line = first_line[10:].strip()  # Remove "Item Name:" (10 chars)
+    
+    # Extract brand: First capitalized word(s) before comma, dash, or parenthesis
+    # Examples:
+    #   "Log Cabin Sugar Free Syrup, 24 FL OZ" → "Log Cabin Sugar Free Syrup"
+    #   "Vlasic Ovals Hamburger Dill Pickle Chips, Keto Friendly" → "Vlasic Ovals Hamburger Dill Pickle Chips"
+    
+    # Pattern: Capitalized words until delimiter (comma, dash, parenthesis, or "fl oz"/"ounce" unit indicators)
+    match = re.match(r'^([A-Z][a-zA-Z0-9\s&\'.]+?)(?:,|\s-\s|\(|\s+\d+\s*(?:Ounce|ounce|oz|OZ|Fl Oz|fl oz|Count|count|Pound|pound|lb))', first_line)
+    
     if match:
         brand = match.group(1).strip()
-        # Filter out common non-brand words
-        if brand not in ['Pack', 'Set', 'Bundle', 'Size']:
-            return brand
+        
+        # Filter out common non-brand words and overly long extractions
+        exclude_words = ['Pack', 'Set', 'Bundle', 'Size', 'Box', 'Case', 'Item Name']
+        if brand in exclude_words:
+            return ''
+        
+        # If brand is very long (>60 chars), it's likely the full product name
+        # Try to extract just first 2-3 words as brand
+        if len(brand) > 60:
+            words = brand.split()[:3]  # Take first 3 words as likely brand
+            brand = ' '.join(words)
+        
+        return brand
     
     return ''
 
@@ -254,6 +274,13 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
         df['price_per_unit'] = df.apply(
             lambda row: row['price'] / row['value'] if pd.notna(row['value']) and row['value'] > 0 else None,
             axis=1
+        )
+        
+        # Add price segments for SMAPE risk analysis
+        df['price_segment'] = pd.cut(
+            df['price'],
+            bins=[0, 10, 50, 100, float('inf')],
+            labels=['Budget', 'Mid-Range', 'Premium', 'Luxury']
         )
     
     print(f"Created {len([col for col in df.columns if col not in ['sample_id', 'catalog_content', 'image_link', 'price']])} new features")
