@@ -59,9 +59,12 @@ def smape_by_segment(df, y_true_col='price', y_pred_col='pred', segment_col='pri
     return results
 
 
-def train_lgb_cv(df, features, target='price', n_splits=5):
+def train_lgb_cv(df, features, target='price', n_splits=5, use_log=True):
     """
     Train LightGBM with K-Fold CV
+    
+    Args:
+    - use_log: If True, predict in log space (better for SMAPE)
     
     Returns:
     - oof_predictions: Out-of-fold predictions for full dataset
@@ -83,6 +86,10 @@ def train_lgb_cv(df, features, target='price', n_splits=5):
     X = df[features].values
     y = df[target].values
     
+    # Log transform target (reduces SMAPE for low prices)
+    if use_log:
+        y = np.log1p(y)  # log(price + 1)
+    
     # K-Fold CV
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE)
     oof_predictions = np.zeros(len(df))
@@ -98,9 +105,9 @@ def train_lgb_cv(df, features, target='price', n_splits=5):
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         
-        # LightGBM params - CONSERVATIVE for baseline
+        # LightGBM params - MSE in log space approximates percentage error
         params = {
-            'objective': 'regression',
+            'objective': 'regression',  # MSE on log-transformed targets
             'metric': 'rmse',
             'boosting_type': 'gbdt',
             'num_leaves': 31,
@@ -128,10 +135,18 @@ def train_lgb_cv(df, features, target='price', n_splits=5):
         
         # Predict
         val_pred = model.predict(X_val)
+        
+        # Inverse transform if using log
+        if use_log:
+            val_pred = np.expm1(val_pred)  # exp(pred) - 1
+            y_val_actual = np.expm1(y_val)  # Convert back for SMAPE calculation
+        else:
+            y_val_actual = y_val
+        
         oof_predictions[val_idx] = val_pred
         
         # Calculate SMAPE for this fold
-        fold_smape = smape(y_val, val_pred)
+        fold_smape = smape(y_val_actual, val_pred)
         fold_scores.append(fold_smape)
         print(f"Fold {fold}: {fold_smape:.2f}%", end="  ")
         
