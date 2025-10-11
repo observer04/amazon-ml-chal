@@ -289,6 +289,18 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     # Add description length (just the description part, not entire catalog)
     df['description_length'] = df['description'].fillna('').str.len()
     
+    # INTERACTION FEATURES - Capture feature combinations
+    print("Creating interaction features...")
+    
+    # Value interactions with quality signals
+    df['value_x_premium'] = df['value'].fillna(0) * df['has_premium']
+    df['value_x_luxury'] = df['value'].fillna(0) * df['has_luxury']
+    df['value_x_organic'] = df['value'].fillna(0) * df['has_organic']
+    
+    # Pack size interactions (bulk discount signals)
+    df['pack_x_premium'] = df['pack_size'].fillna(1) * df['has_premium']
+    df['pack_x_value'] = df['pack_size'].fillna(1) * df['value'].fillna(0)
+    
     # Calculate price per unit (only for training data with 'price')
     if 'price' in df.columns:
         df['price_per_unit'] = df.apply(

@@ -59,12 +59,78 @@ def smape_by_segment(df, y_true_col='price', y_pred_col='pred', segment_col='pri
     return results
 
 
-def train_lgb_cv(df, features, target='price', n_splits=5, use_log=True):
+def apply_segment_transform(prices, transform_type='adaptive'):
     """
-    Train LightGBM with K-Fold CV
+    Apply segment-specific transforms to handle different price ranges
+    
+    adaptive: Budget=log, Mid-Range=none, Premium/Luxury=sqrt
+    log: log transform for all
+    sqrt: sqrt transform for all
+    none: no transform
+    """
+    if transform_type == 'none':
+        return prices, None
+    
+    transformed = np.zeros_like(prices)
+    segment_masks = {
+        'budget': prices < 10,
+        'mid': (prices >= 10) & (prices < 50),
+        'premium': (prices >= 50) & (prices < 100),
+        'luxury': prices >= 100
+    }
+    
+    if transform_type == 'adaptive':
+        # Budget: log (compress low prices)
+        transformed[segment_masks['budget']] = np.log1p(prices[segment_masks['budget']])
+        # Mid-Range: no transform (already working!)
+        transformed[segment_masks['mid']] = prices[segment_masks['mid']]
+        # Premium: sqrt (less compression than log)
+        transformed[segment_masks['premium']] = np.sqrt(prices[segment_masks['premium']])
+        # Luxury: sqrt
+        transformed[segment_masks['luxury']] = np.sqrt(prices[segment_masks['luxury']])
+    elif transform_type == 'log':
+        transformed = np.log1p(prices)
+    elif transform_type == 'sqrt':
+        transformed = np.sqrt(prices)
+    
+    return transformed, segment_masks
+
+
+def inverse_segment_transform(transformed, original_prices, transform_type='adaptive'):
+    """Inverse transform predictions back to original scale"""
+    if transform_type == 'none':
+        return transformed
+    
+    predictions = np.zeros_like(transformed)
+    segment_masks = {
+        'budget': original_prices < 10,
+        'mid': (original_prices >= 10) & (original_prices < 50),
+        'premium': (original_prices >= 50) & (original_prices < 100),
+        'luxury': original_prices >= 100
+    }
+    
+    if transform_type == 'adaptive':
+        # Budget: exp
+        predictions[segment_masks['budget']] = np.expm1(transformed[segment_masks['budget']])
+        # Mid-Range: no transform
+        predictions[segment_masks['mid']] = transformed[segment_masks['mid']]
+        # Premium/Luxury: square
+        predictions[segment_masks['premium']] = transformed[segment_masks['premium']] ** 2
+        predictions[segment_masks['luxury']] = transformed[segment_masks['luxury']] ** 2
+    elif transform_type == 'log':
+        predictions = np.expm1(transformed)
+    elif transform_type == 'sqrt':
+        predictions = transformed ** 2
+    
+    return predictions
+
+
+def train_lgb_cv(df, features, target='price', n_splits=5, transform='adaptive'):
+    """
+    Train LightGBM with K-Fold CV and segment-adaptive transforms
     
     Args:
-    - use_log: If True, predict in log space (better for SMAPE)
+    - transform: 'adaptive', 'log', 'sqrt', or 'none'
     
     Returns:
     - oof_predictions: Out-of-fold predictions for full dataset
@@ -81,14 +147,12 @@ def train_lgb_cv(df, features, target='price', n_splits=5, use_log=True):
             cat_features.append(col)
     
     # Don't fill numeric NaN - LightGBM handles NaN natively
-    # df[features] = df[features].fillna(-999)  # REMOVED: Let LightGBM handle missing values
     
     X = df[features].values
-    y = df[target].values
+    y_original = df[target].values
     
-    # Log transform target (reduces SMAPE for low prices)
-    if use_log:
-        y = np.log1p(y)  # log(price + 1)
+    # Apply segment-adaptive transform
+    y, _ = apply_segment_transform(y_original, transform)
     
     # K-Fold CV
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE)
@@ -136,17 +200,14 @@ def train_lgb_cv(df, features, target='price', n_splits=5, use_log=True):
         # Predict
         val_pred = model.predict(X_val)
         
-        # Inverse transform if using log
-        if use_log:
-            val_pred = np.expm1(val_pred)  # exp(pred) - 1
-            y_val_actual = np.expm1(y_val)  # Convert back for SMAPE calculation
-        else:
-            y_val_actual = y_val
+        # Inverse transform predictions back to original scale
+        y_val_original = y_original[val_idx]
+        val_pred = inverse_segment_transform(val_pred, y_val_original, transform)
         
         oof_predictions[val_idx] = val_pred
         
-        # Calculate SMAPE for this fold
-        fold_smape = smape(y_val_actual, val_pred)
+        # Calculate SMAPE for this fold (using original prices)
+        fold_smape = smape(y_val_original, val_pred)
         fold_scores.append(fold_smape)
         print(f"Fold {fold}: {fold_smape:.2f}%", end="  ")
         
@@ -304,9 +365,9 @@ def experiment_3_ipq_quality_brand():
 # ============================================================================
 
 def experiment_4_full_tabular():
-    """IPQ + Quality + Brand + Pack + Size Signals"""
+    """IPQ + Quality + Brand + Pack + Size Signals + Interactions"""
     print("\n" + "="*70)
-    print("EXP 4: FULL FEATURES (+ pack_size, is_bulk, is_travel_size)")
+    print("EXP 4: FULL + INTERACTIONS (adaptive transform)")
     print("="*70)
     
     df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv', low_memory=False)
@@ -316,15 +377,15 @@ def experiment_4_full_tabular():
         'has_premium', 'has_organic', 'has_gourmet',
         'has_natural', 'has_artisan', 'has_luxury',
         'brand',
-        'is_travel_size', 'is_bulk'  # Size category signals
-        # Removed text features: text_length, word_count, has_bullets, num_bullets
-        # Reason: Weak correlation (r=0.14), added noise in previous run
+        'is_travel_size', 'is_bulk',  # Size category signals
+        'value_x_premium', 'value_x_luxury', 'value_x_organic',  # Interactions
+        'pack_x_premium', 'pack_x_value'
     ]
     
-    oof_preds, feat_imp, fold_scores = train_lgb_cv(df, features)
+    oof_preds, feat_imp, fold_scores = train_lgb_cv(df, features, transform='adaptive')
     overall_smape, segment_smapes = print_results(
         df, oof_preds, feat_imp, fold_scores,
-        "IPQ + Quality + Brand + Pack"
+        "Full + Interactions (Adaptive)"
     )
     
     return overall_smape
