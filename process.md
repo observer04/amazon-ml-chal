@@ -379,3 +379,271 @@ def extract_brand(text):
 ---
 
 ## FOCUS: Stop local execution, deploy to Kaggle NOW
+
+---
+
+## Step 5: Problem Resolution & Code Corrections ⚠️
+
+**Date:** October 11, 2025  
+**Context:** After feature extraction, multiple critical issues discovered during baseline model preparation
+
+### Problem 1: Corrupted Feature Files (1M rows instead of 75k)
+
+**Discovery:**
+- User noticed `test_with_features.csv` had doubled in size
+- Line count showed ~1M rows instead of expected 75k
+- Excel showed many empty cells across rows
+
+**Root Cause Analysis:**
+```
+1. catalog_content field contains MULTILINE text (bullet points with \n)
+2. Initial CSV generation used default pandas to_csv() without proper quoting
+3. CSV parser interpreted newlines as row breaks → split single rows into multiple rows
+4. Result: 75,000 logical rows became 1,048,731 physical lines in CSV
+```
+
+**Visual Example of Problem:**
+```csv
+# CORRECT (1 row):
+sample_id,catalog_content,price
+12345,"Item Name: Coffee\nBullet 1: Premium\nBullet 2: Organic",25.99
+
+# WRONG (parser sees 3 rows):
+sample_id,catalog_content,price
+12345,"Item Name: Coffee
+Bullet 1: Premium
+Bullet 2: Organic",25.99
+```
+
+**Resolution:**
+1. **Deleted corrupted files:** `rm dataset/train_with_features.csv dataset/test_with_features.csv`
+2. **Created `generate_features.py`** with proper CSV handling:
+   ```python
+   # Key fix: Use quoting=1 (QUOTE_ALL) to escape embedded newlines
+   df.to_csv(filepath, index=False, quoting=1)
+   df_verify = pd.read_csv(filepath, quoting=1)  # Must read with same quoting
+   ```
+3. **Regenerated features:** Now correctly shows 75,000 rows in pandas (1M+ lines in wc -l is normal for quoted multiline CSV)
+
+**Verification:**
+```bash
+wc -l dataset/train_with_features.csv  # Shows 1,050,409 lines (includes quoted newlines)
+python -c "import pandas as pd; print(len(pd.read_csv('...', quoting=1)))"  # Shows 75,000 rows ✓
+```
+
+---
+
+### Problem 2: Missing Critical Features for Text Embeddings
+
+**Discovery:**
+- User performed sanity check on original feature schema design
+- Identified missing `all_bullets_text` field - critical for text embeddings
+- Missing `description_length` - needed for text richness analysis
+
+**Original Schema (User's Design):**
+```python
+{
+    'all_bullets_text': str,  # Concatenated for embeddings - MISSING!
+    'description_length': int,  # Just description part - MISSING!
+    # ... other fields implemented correctly
+}
+```
+
+**What Was Actually Implemented:**
+```python
+{
+    'bullet_1' to 'bullet_6': str,  # ✓ Separate columns for LightGBM
+    'text_length': int,             # ✓ But this is ENTIRE catalog, not just description
+    # Missing: all_bullets_text
+    # Missing: description_length
+}
+```
+
+**Why This Matters:**
+- **LightGBM** needs separate bullet columns (`bullet_1`, `bullet_2`, etc.) → We had this ✓
+- **Text embeddings (MLP)** need concatenated text (`all_bullets_text`) → We were MISSING this ✗
+- Without `all_bullets_text`, we'd have to reconstruct it later → risk of inconsistency
+
+**Resolution:**
+
+1. **Updated `parse_catalog_content()` in `src/feature_extraction.py`:**
+   ```python
+   # Added concatenated bullets field
+   all_bullets_text = '\n'.join(bullets)
+   
+   return {
+       'item_name': item_name,
+       'bullets': bullets,
+       'all_bullets_text': all_bullets_text,  # NEW
+       'description': description
+   }
+   ```
+
+2. **Updated `create_features()` to extract new fields:**
+   ```python
+   # Add all_bullets_text for embeddings
+   df['all_bullets_text'] = parsed.apply(lambda x: x['all_bullets_text'])
+   
+   # Add description_length (just description, not entire catalog)
+   df['description_length'] = df['description'].fillna('').str.len()
+   ```
+
+3. **Regenerated features with fixed code:**
+   ```bash
+   python generate_features.py
+   # Output: train_with_features.csv (30 columns, was 28)
+   # Output: test_with_features.csv (27 columns, was 25)
+   ```
+
+**New Feature Count:**
+- **Train:** 28 → 30 columns (+`all_bullets_text`, +`description_length`)
+- **Test:** 25 → 27 columns (same additions)
+
+---
+
+### Problem 3: Git Repository Issues - Large Files & Lost Data
+
+**Discovery:**
+- Attempted to push changes to GitHub
+- Push failed with "HTTP 408 timeout" - files too large (78MB)
+- Later discovered `git reset --hard` had deleted `train.csv` and `test.csv`
+
+**Issues Encountered:**
+
+1. **Large CSV files in git history:**
+   - User had committed corrupted CSVs in commit `2c8cbbc` ("data")
+   - Files were 1M+ lines → ~70MB each
+   - Git push timing out due to size
+
+2. **Data loss from reset:**
+   - Did `git reset --hard aa6971d` to remove bad commit
+   - This DELETED `train.csv` and `test.csv` from filesystem
+   - Only sample files remained
+
+3. **.gitignore was correct but files already tracked:**
+   - `.gitignore` had `dataset/*.csv` 
+   - But once files are committed, .gitignore doesn't apply
+
+**Resolution:**
+
+1. **Recovered original data from reflog:**
+   ```bash
+   git checkout 2c8cbbc -- dataset/train.csv dataset/test.csv
+   # Restored train.csv (70MB) and test.csv (70MB)
+   ```
+
+2. **Cleaned up git history:**
+   ```bash
+   git reset --hard aa6971d  # Remove corrupted CSV commit
+   git add baseline_model.py generate_features.py  # Add only code
+   git commit -m "Add baseline + feature generation scripts"
+   ```
+
+3. **Final decision: Include CSVs for Kaggle convenience:**
+   - User requested: "add both it's easier for me to get them on kaggle this way"
+   - Pushed train.csv + test.csv + code to GitHub
+   - GitHub warning about large files (>50MB) but push succeeded
+   ```bash
+   git push origin main
+   # Result: All files now on GitHub for easy Kaggle cloning
+   ```
+
+---
+
+### Problem 4: Baseline Model Not Run
+
+**Discovery:**
+- Agent was preparing to run baseline experiments locally
+- User correctly intervened: "you seem to running everything on my laptop. can you be little focused"
+
+**Why This Was Wrong:**
+- Local machine has no GPU
+- Baseline experiments take 20-30 minutes
+- Should save local compute for Kaggle GPU environment
+- Risk of running outdated code if changes made after local execution
+
+**Resolution:**
+- **Created `baseline_model.py`** with 4 incremental experiments but **DID NOT RUN**
+- Added proper reasoning comments for each experiment
+- Script ready to run on Kaggle after feature generation
+
+**Correct Workflow (Now Documented):**
+```
+Local:
+1. Write code (feature_extraction.py, baseline_model.py) ✓
+2. Commit to git ✓
+3. Push to GitHub ✓
+
+Kaggle (with GPU):
+1. Clone repo ⏳ NEXT
+2. Generate features (15 sec) ⏳
+3. Run baseline experiments (20-30 min) ⏳
+4. Analyze results ⏳
+5. Submit predictions ⏳
+```
+
+---
+
+### Files Modified/Created in This Step:
+
+**Created:**
+- `generate_features.py` - Proper CSV handling with quoting=1
+- `baseline_model.py` - 4 incremental experiments for validation
+
+**Modified:**
+- `src/feature_extraction.py` - Added `all_bullets_text`, `description_length`
+
+**Regenerated:**
+- `dataset/train_with_features.csv` - Now 30 columns (was 28)
+- `dataset/test_with_features.csv` - Now 27 columns (was 25)
+
+**Git Commits:**
+```
+09fe526 - Add: baseline_model.py + generate_features.py
+1091ac5 - Fix: Add all_bullets_text + description_length
+```
+
+**Pushed to GitHub:**
+- All code files (src/, config/, scripts)
+- Original data (train.csv, test.csv) - 70MB each
+- Ready for Kaggle deployment
+
+---
+
+### Lessons Learned:
+
+1. **CSV Multiline Handling:** Always use `quoting=1` (QUOTE_ALL) when data contains newlines
+2. **Feature Schema Completeness:** Design schema upfront for ALL use cases (LightGBM + embeddings)
+3. **Git Large Files:** Consider `.gitignore` before first commit, or use Git LFS for >50MB files
+4. **Local vs Kaggle Execution:** Reserve GPU-intensive work for Kaggle, not local laptop
+5. **Schema Validation:** User's sanity check caught missing fields before baseline - saved debugging time later
+
+---
+
+### Current Status (Ready for Kaggle):
+
+**✅ Completed:**
+- Feature extraction fixed with proper CSV handling
+- Complete feature schema (30 train columns, 27 test columns)
+- Baseline model script ready (not run yet)
+- All code + data pushed to GitHub
+
+**⏳ Next Steps (On Kaggle):**
+1. Clone repo: `git clone https://github.com/observer04/amazon-ml-chal.git`
+2. Generate features: `python generate_features.py` (~15 seconds)
+3. Run baseline: `python baseline_model.py` (~20-30 minutes)
+4. Analyze results and decide next steps
+
+**Expected Baseline Results:**
+- Experiment 1 (IPQ only): 15-18% SMAPE
+- Experiment 2 (+ quality): 13-16% SMAPE
+- Experiment 3 (+ brand): 12-15% SMAPE
+- Experiment 4 (+ text stats): 11-14% SMAPE
+
+If final baseline <12% → Submit to leaderboard (likely Top 50)  
+If 12-15% → Add text embeddings using `all_bullets_text` field  
+If >15% → Debug features, optimize hyperparameters
+
+---
+
+## FOCUS: Deploy to Kaggle NOW - All Issues Resolved
