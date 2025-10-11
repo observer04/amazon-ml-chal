@@ -244,7 +244,7 @@ def experiment_2_ipq_plus_quality():
     df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv')
     
     features = [
-        'value',
+        'value', 'unit',  # IPQ = Item-Pack-Quantity
         'has_premium', 'has_organic', 'has_gourmet',
         'has_natural', 'has_artisan', 'has_luxury'
     ]
@@ -287,7 +287,7 @@ def experiment_3_ipq_quality_brand():
     df = pd.read_csv(f'{DATA_PATH}/train_with_features.csv')
     
     features = [
-        'value',
+        'value', 'unit',  # IPQ = Item-Pack-Quantity
         'has_premium', 'has_organic', 'has_gourmet',
         'has_natural', 'has_artisan', 'has_luxury',
         'brand'
