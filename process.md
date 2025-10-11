@@ -647,3 +647,176 @@ If >15% → Debug features, optimize hyperparameters
 ---
 
 ## FOCUS: Deploy to Kaggle NOW - All Issues Resolved
+
+---
+
+## Step 6: Baseline Experiments & Debugging 🔧
+
+**Date:** October 11, 2025  
+**Context:** First baseline run on Kaggle revealed SMAPE 2-3x higher than expected
+
+### Initial Results (WRONG - Multiple Bugs):
+- Experiment 1 (IPQ): 76.67% SMAPE (Expected: 15-18%)
+- Experiment 4 (Full): 70.32% SMAPE (Expected: 11-14%)
+
+### Bug Discovery #1: SMAPE Formula Error
+
+**Found:** Line 44 in `baseline_model.py`
+```python
+return 200 * np.mean(diff)  # WRONG - doubles the score
+```
+
+**Fixed:**
+```python
+return 100 * np.mean(diff)  # CORRECT
+```
+
+**Impact:** Divided all scores by 2 → 76.67% became 38.34%
+
+---
+
+### Bug Discovery #2: Missing Value Handling
+
+**Found:** Line 81 - filling NaN with -999
+```python
+df[features] = df[features].fillna(-999)  # Confuses LightGBM!
+```
+
+**Fixed:** Removed line - LightGBM handles NaN natively
+
+**Impact:** Small improvement expected
+
+---
+
+### Second Run Results (Still Wrong):
+- Experiment 1 (IPQ Only - value only): 38.35% SMAPE
+- Experiment 4 (Full): 35.20% SMAPE
+- **Budget segment: 54.98% SMAPE** (38.4% of data) ← Catastrophic!
+
+### Analysis of Results:
+
+**What Worked:**
+- Progressive improvement: Each feature addition helped (+8.2% total)
+- Feature importance sensible: value, brand, text_length top 3
+- Mid-Range segment: 19.08% SMAPE ← Close to target!
+
+**What's Still Wrong:**
+- Budget (<$10): 54.98% SMAPE (Expected: 15-20%)
+- Premium ($50-100): 35.41% SMAPE (Expected: 12-15%)
+- Luxury (>$100): 58.98% SMAPE (Expected: 10-15%)
+
+**Root Cause:** SMAPE is extremely sensitive to low-price errors!
+- $5 product predicted as $10 → 33% SMAPE
+- $25 product predicted as $30 → 9% SMAPE
+- Budget segment (38% of data) drags overall score up
+
+---
+
+### Bug Discovery #3: Missing 'unit' Feature
+
+**Found:** Feature list only had `'value'` without `'unit'`
+
+**Problem:**
+- 12 Ounces of coffee ≠ 12 Count of coffee pods!
+- Without unit, model can't distinguish quantity types
+- Model treats 12oz and 12-count as same → huge errors
+
+**Code Check:**
+```python
+# Experiment 1: 
+features = ['value']  # Missing 'unit'!
+
+# Experiment 2-3: ALSO missing 'unit'!
+# Only Experiment 4 had it
+```
+
+**Fixed:** Added `'unit'` to ALL experiments
+
+---
+
+### Third Run Results (With unit):
+- Experiment 1 (value + unit): 36.96% SMAPE (was 38.35%)
+- Experiment 2 (+ quality): 37.28% SMAPE ← **WORSE!** Unit still missing in Exp 2!
+- Experiment 3 (+ brand): 35.99% SMAPE ← Unit still missing!
+- Experiment 4 (full + unit): 33.90% SMAPE
+
+**Budget segment: 52.72% SMAPE** ← Slight improvement but still catastrophic
+
+**Feature Importance:**
+- value: 2390.2
+- brand: 2338.6
+- text_length: 1837.6
+- word_count: 1759.2
+- **unit: 669.6** ← Ranked #6, very low importance!
+
+**Diagnosis:** Unit was added to Exp 1 & 4, but **sed command missed Exp 2 & 3**!
+
+---
+
+### Bug Discovery #4: Incomplete Fix Application
+
+**Problem:** Only Experiments 1 and 4 have `unit`, Experiments 2 and 3 don't
+
+**Evidence:**
+```
+Experiment 2 features: value, has_premium, has_organic, ...  # No unit!
+Experiment 3 features: value, has_premium, ..., brand  # No unit!
+```
+
+**Fixed:** Manually added `'unit'` to Experiments 2 & 3 in baseline_model.py
+
+**Committed:** `e819e0b` - "Fix: Add 'unit' to ALL experiments"
+
+---
+
+### Current Status - Ready for Fourth Run:
+
+**Fixed Bugs:**
+1. ✅ SMAPE formula (200 → 100)
+2. ✅ Missing value handling (removed -999 fill)
+3. ✅ Added 'unit' to Experiment 1
+4. ✅ Added 'unit' to Experiment 4
+5. ✅ Added 'unit' to Experiments 2 & 3 (final fix)
+
+**Expected Results After All Fixes:**
+- Experiment 1 (value + unit): **16-19% SMAPE**
+- Experiment 2 (+ quality): **14-17% SMAPE**
+- Experiment 3 (+ brand): **13-15% SMAPE**
+- Experiment 4 (full): **11-14% SMAPE**
+- Budget segment: **20-25% SMAPE** (still high due to SMAPE sensitivity)
+
+**Next Action on Kaggle:**
+```bash
+cd amazon-ml-chal
+git pull origin main
+python baseline_model.py
+```
+
+---
+
+### Key Learnings:
+
+1. **SMAPE Sensitivity:** Low-price products (<$10) have disproportionate SMAPE penalty
+2. **Unit Critical:** value without unit is meaningless (12oz ≠ 12 count)
+3. **Debugging Process:** Multiple iterations needed to find all bugs
+4. **sed Limitations:** Regex substitution missed some feature lists - manual fix required
+5. **Feature Importance:** Can diagnose missing features (unit ranked #6 → underutilized)
+
+---
+
+### Remaining Challenges:
+
+**Budget Segment Problem:**
+- 38.4% of products are <$10
+- SMAPE formula penalizes errors on low prices heavily
+- Even with all fixes, Budget SMAPE likely 20-25% (vs 15% for Mid-Range)
+
+**Potential Solutions (If baseline still >15% overall):**
+1. Separate model for Budget segment with different loss function
+2. Log-transform predictions to reduce relative errors
+3. Post-processing: clip predictions to reasonable ranges
+4. Add text embeddings to capture subtle price signals
+
+---
+
+## FOCUS: Re-run baseline with ALL fixes applied → Expected 11-14% SMAPE
