@@ -49,18 +49,19 @@ def train_final_model(df_train, features):
         X_train, X_val = X[train_idx], X[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
         
-        # LightGBM params (same as baseline)
+        # LightGBM params - AGGRESSIVE TRAINING FOR FINAL MODEL
         params = {
             'objective': 'regression',
             'metric': 'rmse',
-            'num_leaves': 63,
-            'learning_rate': 0.03,
-            'min_data_in_leaf': 15,
+            'num_leaves': 127,             # Increased from 63 (more complex)
+            'learning_rate': 0.02,         # Slower (was 0.03)
+            'min_data_in_leaf': 10,        # Finer splits (was 15)
             'feature_fraction': 0.8,
             'bagging_fraction': 0.8,
             'bagging_freq': 5,
-            'lambda_l1': 0.5,
-            'lambda_l2': 0.5,
+            'lambda_l1': 0.3,              # Lighter regularization
+            'lambda_l2': 0.3,
+            'max_depth': 12,               # Limit depth to prevent overfitting
             'verbose': -1,
             'seed': RANDOM_STATE,
         }
@@ -71,10 +72,10 @@ def train_final_model(df_train, features):
         model = lgb.train(
             params,
             train_data,
-            num_boost_round=2000,
+            num_boost_round=3000,          # Increased from 2000
             valid_sets=[val_data],
             callbacks=[
-                lgb.early_stopping(stopping_rounds=50),
+                lgb.early_stopping(stopping_rounds=100),  # More patience (was 50)
                 lgb.log_evaluation(period=0)
             ]
         )
@@ -123,7 +124,7 @@ def predict_test(df_test, features, models, label_encoders):
     print(f"   Min: ${final_pred.min():.2f}")
     print(f"   Max: ${final_pred.max():.2f}")
     print(f"   Mean: ${final_pred.mean():.2f}")
-    print(f"   Median: ${final_pred.median():.2f}\n")
+    print(f"   Median: ${np.median(final_pred):.2f}\n")
     
     return final_pred
 
