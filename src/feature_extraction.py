@@ -301,6 +301,17 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     df['pack_x_premium'] = df['pack_size'].fillna(1) * df['has_premium']
     df['pack_x_value'] = df['pack_size'].fillna(1) * df['value'].fillna(0)
     
+    # Brand presence interactions (helps segment budget vs premium brands)
+    df['brand_exists'] = df['brand'].notna().astype(int)
+    df['brand_x_premium'] = df['brand_exists'] * df['has_premium']
+    df['brand_x_organic'] = df['brand_exists'] * df['has_organic']
+    
+    # Travel size interactions (travel products have different price dynamics)
+    df['travel_x_value'] = df['is_travel_size'] * df['value'].fillna(0)
+    
+    # Bulk interactions (bulk discounts)
+    df['bulk_x_value'] = df['is_bulk'] * df['value'].fillna(0)
+    
     # Calculate price per unit (only for training data with 'price')
     if 'price' in df.columns:
         df['price_per_unit'] = df.apply(
