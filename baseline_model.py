@@ -41,7 +41,7 @@ def smape(y_true, y_pred):
     denominator = (np.abs(y_true) + np.abs(y_pred))
     diff = np.abs(y_true - y_pred) / denominator
     diff[denominator == 0] = 0.0
-    return 200 * np.mean(diff)
+    return 100 * np.mean(diff)  # Fixed: was 200, should be 100
 
 
 def smape_by_segment(df, y_true_col='price', y_pred_col='pred', segment_col='price_segment'):
@@ -77,8 +77,8 @@ def train_lgb_cv(df, features, target='price', n_splits=5):
             df[col] = le.fit_transform(df[col].astype(str))
             cat_features.append(col)
     
-    # Fill numeric NaN
-    df[features] = df[features].fillna(-999)
+    # Don't fill numeric NaN - LightGBM handles NaN natively
+    # df[features] = df[features].fillna(-999)  # REMOVED: Let LightGBM handle missing values
     
     X = df[features].values
     y = df[target].values
