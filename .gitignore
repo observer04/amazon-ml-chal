@@ -23,6 +23,7 @@ images/
 *.h5
 *.pth
 *.bin
+*.zip
 
 # Keep only sample and structure files
 !dataset/sample_*.csv

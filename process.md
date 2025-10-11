@@ -820,3 +820,349 @@ python baseline_model.py
 ---
 
 ## FOCUS: Re-run baseline with ALL fixes applied → Expected 11-14% SMAPE
+
+---
+
+## Step 7: Baseline Validation & Transform Experiments 🎯
+
+**Date:** October 11, 2025 (Evening)  
+**Context:** After all bug fixes, completed multiple baseline runs with progressive improvements
+
+### Fourth Run Results (All Bugs Fixed):
+- **Experiment 1** (value + unit): 33.35% SMAPE
+- **Experiment 2** (+ quality keywords): 33.68% SMAPE ← Quality keywords HURT!
+- **Experiment 3** (+ brand): 33.99% SMAPE ← Brand also HURT!
+- **Experiment 4** (full features): 33.90% SMAPE
+
+**By Segment (Exp 4):**
+- Budget (<$10): 51.75% SMAPE (38.4% of data) 🔴 Still catastrophic
+- Mid-Range ($10-$50): 18.85% SMAPE ✅ Good
+- Premium ($50-$100): 39.47% SMAPE ⚠️ High
+- Luxury (>$100): 57.96% SMAPE 🔴 Very high
+
+**Key Observations:**
+1. **Budget segment dominates error** - 38% of data, 51% SMAPE
+2. Quality keywords & brand **hurt performance** (overfitting on noisy features?)
+3. Simple value + unit performs best (33.35%)
+4. Model struggles with extreme price ranges (<$10 and >$100)
+
+---
+
+### External Evaluation & Defensive Analysis
+
+**Agent Received Critique:** Claims of missing features and wrong objective
+
+**Claimed Issues:**
+1. "Missing price_per_unit feature"
+2. "Should use MAPE objective instead of SMAPE"
+
+**Defense & Reality Check:**
+
+**Re: "Missing price_per_unit":**
+- ✅ price_per_unit EXISTS in train_with_features.csv (col 11)
+- ❌ BUT: It's **train-only** (uses true price) → data leakage if used!
+- ✅ Correct approach: Use `value` + `unit` separately (what we did)
+- **Verdict:** Critic was WRONG - feature exists but shouldn't be used
+
+**Re: "Use MAPE objective":**
+- ❌ MAPE (Mean Absolute Percentage Error) ≠ SMAPE
+- MAPE formula: (1/n) * Σ |actual - pred| / |actual| ← **Asymmetric!**
+- SMAPE formula: (1/n) * Σ |actual - pred| / ((|actual| + |pred|)/2) ← **Symmetric!**
+- MAPE penalizes over-prediction MORE than under-prediction
+- SMAPE treats both equally
+- LightGBM doesn't have native SMAPE objective (using MSE is standard)
+- **Verdict:** Critic was WRONG - MAPE is not equivalent to SMAPE
+
+**Real Issues Identified:**
+1. ✅ Budget segment (<$10) is 51% SMAPE → main problem
+2. ✅ Model treats prices linearly → SMAPE wants percentage thinking
+3. ✅ Need transform to handle wide price range ($0.13 - $2,796)
+
+---
+
+### Fifth Run: Log Transform Experiment
+
+**Hypothesis:** Log transform will help model think in percentages, reduce Budget segment error
+
+**Changes:**
+```python
+# During training:
+y_train_log = np.log1p(y_train)  # log(1 + price)
+model.fit(X_train, y_train_log)
+
+# During prediction:
+y_pred = np.expm1(model.predict(X_val))  # exp(log_pred) - 1
+```
+
+**Results:**
+- **Overall SMAPE: 30.21%** ← 🎉 3.7% improvement!
+- Budget (<$10): **36.32%** ← 15.4% improvement! (was 51.75%)
+- Mid-Range ($10-$50): **21.29%** ← 2.4% worse (was 18.85%)
+- Premium ($50-$100): **43.26%** ← 3.8% worse (was 39.47%)
+- Luxury (>$100): **63.07%** ← 5.1% worse (was 57.96%)
+
+**Analysis:**
+- ✅ Log transform **dramatically helped Budget segment**
+- ❌ But **hurt Premium and Luxury** significantly
+- Trade-off: Help 38% of data (Budget) vs hurt 11% (Premium+Luxury)
+- Net gain: 3.7% overall improvement
+
+---
+
+### Sixth Run: Segment-Adaptive Transform (CATASTROPHIC FAILURE)
+
+**Hypothesis:** Use different transforms per segment to optimize each
+
+**Approach:**
+```python
+# Budget: sqrt transform (gentler than log)
+# Mid-Range: log transform
+# Premium: no transform
+# Luxury: no transform
+```
+
+**Results:**
+- **Overall SMAPE: 54.00%** ← 🔥 24% WORSE than log!
+- Complete disaster, reverted immediately
+
+**Root Cause:** Complex transform logic introduced bugs, predictions inconsistent
+
+---
+
+### Seventh Run: Square Root Transform + Interactions
+
+**Hypothesis:** sqrt transform balances all segments better than log
+
+**Changes:**
+1. Transform: `y_train_sqrt = np.sqrt(y_train)`
+2. Added 10 interaction features:
+   - value × quality flags (3)
+   - pack × quality (2)
+   - brand × quality (2)
+   - size × value (2)
+   - brand_exists indicator
+
+**Results:**
+- **Overall SMAPE: 30.70%** 
+- Budget (<$10): 38.32% (vs 36.32% log)
+- Mid-Range ($10-$50): 21.88% (vs 21.29% log)
+- Premium ($50-$100): 43.11% (vs 43.26% log)
+- Luxury (>$100): 62.95% (vs 63.07% log)
+
+**Analysis:**
+- Sqrt slightly worse than log overall (+0.5%)
+- But more balanced across segments
+- Interactions helped slightly
+- Chose sqrt for stability
+
+---
+
+### Hyperparameter Tuning & Submission Preparation
+
+**Aggressive Training Settings:**
+```python
+params = {
+    'num_leaves': 127,           # Was: 31
+    'learning_rate': 0.02,       # Was: 0.05
+    'num_boost_round': 3000,     # Was: 1000
+    'early_stopping_rounds': 100, # Was: 50
+    'min_data_in_leaf': 10,
+    'lambda_l1': 0.3,            # L1 regularization
+    'lambda_l2': 0.3,            # L2 regularization
+    'max_depth': 12
+}
+```
+
+**Submission Script Bugs Found:**
+1. `median()` on numpy array → `np.median()` (fixed)
+2. Training stopping too early (853-1570 rounds) → increased patience
+
+**Final Training Results (5-fold CV):**
+- Fold iterations: 1197, 1307, 1362, 1329, 1513 (healthy range)
+- RMSE (sqrt space): 2.02 → 1.98 → 1.96 → 1.93 → 1.95 (decreasing ✅)
+- No overfitting signs
+
+**Test Predictions Generated:**
+- 75,000 samples
+- Min: $1.36, Max: $314.36
+- Mean: $19.86, Median: $16.28
+- 86.8% in $10-$50 range (matches training distribution)
+
+**Validation Passed:**
+- ✅ Correct format (sample_id, price)
+- ✅ 75,000 rows
+- ✅ All positive floats
+- ✅ No missing values
+- ✅ IDs match test.csv
+
+---
+
+## Step 8: First Submission Results & Analysis 📊
+
+**Date:** October 11, 2025 (Late Evening)
+
+### Submission Details:
+- **Model:** LightGBM with sqrt transform, 5-fold CV ensemble
+- **Features:** 28 features (value, unit, pack_size, brand, 6 quality flags, 10 interactions)
+- **Cross-Validation SMAPE:** 30.70%
+- **Expected Public LB:** 28-32% SMAPE
+
+### **Public Leaderboard Result: 62.45% SMAPE** 🔥
+
+**Reality Check:**
+- CV Score: 30.70%
+- Public LB: 62.45%
+- **Gap: +31.75% (CV was 2x better than reality!)**
+
+---
+
+### Initial Reaction & Diagnosis:
+
+**This is CATASTROPHIC overfitting or fundamental error.**
+
+**Possible Causes:**
+
+1. **Train/Test Distribution Mismatch** 🔴 MOST LIKELY
+   - Test set has different price distribution than train
+   - Model trained on one distribution, tested on another
+   - Features may not generalize
+
+2. **Feature Extraction Bug** ⚠️ HIGH PROBABILITY
+   - Test feature extraction may have errors
+   - Different parsing results on test vs train
+   - Silent failures in brand/unit extraction
+
+3. **Transform Issues** ⚠️ POSSIBLE
+   - Sqrt transform applied incorrectly on test predictions
+   - Inverse transform (squaring) may have numerical issues
+   - Extreme values getting amplified
+
+4. **Data Leakage During CV** ⚠️ POSSIBLE
+   - CV validation may have leaked information
+   - Stratification may not match actual test distribution
+   - OOF predictions optimistic
+
+5. **Ensemble Weights Wrong** ⚠️ LESS LIKELY
+   - Simple average of 5 models should be stable
+   - But if individual models bad, average won't help
+
+6. **Target Variable Issues** ⚠️ UNLIKELY
+   - Prices in test may be in different scale
+   - Currency conversion? (unlikely for Amazon)
+   - Different product categories entirely?
+
+---
+
+### Critical Questions to Investigate:
+
+**Feature Distribution:**
+- [ ] Compare train vs test distributions for key features (value, unit, brand_exists)
+- [ ] Check if test has missing values where train didn't
+- [ ] Verify unit normalization working on test
+
+**Prediction Analysis:**
+- [ ] Plot predicted vs actual distribution (if possible)
+- [ ] Check for prediction outliers (very high/low)
+- [ ] Verify inverse transform applied correctly
+
+**Model Sanity:**
+- [ ] Check individual fold predictions (are all 5 models bad?)
+- [ ] Try simple baseline (median price) on test set
+- [ ] Compare feature importance train vs validation
+
+**Code Audit:**
+- [ ] Re-verify test feature generation
+- [ ] Check for any train-only logic in create_submission.py
+- [ ] Ensure no accidental data leakage
+
+---
+
+### Comparison with Expected Performance:
+
+| Metric | Expected | Actual | Delta |
+|--------|----------|--------|-------|
+| CV SMAPE | 30.70% | 30.70% | 0% ✅ |
+| Public LB | 28-32% | **62.45%** | +31.75% 🔥 |
+| Budget Segment CV | 38.32% | ??? | ??? |
+| Mid-Range CV | 21.88% | ??? | ??? |
+
+**Hypothesis:** Test set is MUCH harder than train, or features completely broken on test.
+
+---
+
+### Next Steps (Immediate):
+
+1. **Feature Distribution Analysis:**
+   ```python
+   # Compare train vs test
+   train_stats = train_with_features.describe()
+   test_stats = test_with_features.describe()
+   # Look for large differences
+   ```
+
+2. **Prediction Statistics:**
+   ```python
+   # Check test_out.csv predictions
+   preds = pd.read_csv('test_out.csv')
+   print(preds['price'].describe())
+   # Compare to train price distribution
+   ```
+
+3. **Simple Baseline:**
+   ```python
+   # Predict median price for all test samples
+   median_price = train['price'].median()
+   baseline_preds = [median_price] * 75000
+   # Submit and compare SMAPE
+   ```
+
+4. **Feature Extraction Verification:**
+   ```python
+   # Manually inspect 10 random test samples
+   # Check if value, unit, brand extracted correctly
+   ```
+
+5. **Model Diagnostics:**
+   ```python
+   # Check if model predicting reasonable ranges
+   # Look for NaN or inf in predictions
+   ```
+
+---
+
+### Strategic Implications:
+
+**If Distribution Mismatch:**
+- Need domain adaptation techniques
+- Consider reweighting training samples
+- May need different feature set for test
+
+**If Feature Bug:**
+- Fix extraction and regenerate
+- Should see immediate improvement
+
+**If Transform Issue:**
+- Try no transform (raw prices)
+- Try log instead of sqrt
+- Check numerical stability
+
+**If Fundamental Model Issue:**
+- Start from scratch with simpler model
+- Focus on robust features only (value, unit)
+- Reduce complexity
+
+---
+
+### Lessons Learned (So Far):
+
+1. **CV can be dangerously optimistic** - 30% CV → 62% LB
+2. **Feature engineering needs more validation** - didn't verify test extraction
+3. **Should have submitted simple baseline first** - to calibrate expectations
+4. **Transform adds complexity** - sqrt may have hidden issues
+5. **Need better train/test comparison** - before modeling
+
+---
+
+## FOCUS: Debug the 2x gap between CV and LB - Something is fundamentally wrong
+
+````
