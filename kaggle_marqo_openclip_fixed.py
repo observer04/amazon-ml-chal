@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-HYBRID OPTIMIZATION: Marqo E-commerce with OpenCLIP
-===================================================
+ULTRA-FAST: Marqo E-commerce with OpenCLIP (Multiprocessing Download)
+===================================================================
 
-Strategy: Aggressive download to disk → Batch processing from disk
-- 32 parallel downloads (ultra-fast)
-- PNG format (lossless quality)
-- Memory-efficient batch processing
-- Zero memory accumulation
+Strategy: Multiprocessing download (100 processes) → Batch processing → Cleanup
+- 100 parallel downloads (inspired by utils.py)
+- PNG lossless quality for maximum feature extraction
+- Memory-efficient batch processing (32 images at a time)
+- Peak memory: ~1GB, Peak disk: ~11GB
 
-Memory usage: ~1GB peak (very safe for 29GB RAM)
-Disk usage: ~11GB peak (fits in 57GB limit)
+Expected correlation: 0.03-0.08 (3-8x better than CLIP's 0.0089)
+Download speed: Should be blazing fast with 100 processes!
 """
 
 import os
@@ -33,7 +33,7 @@ import concurrent.futures
 import shutil
 
 print("="*80)
-print("HYBRID OPTIMIZATION: Marqo E-commerce with OpenCLIP")
+print("ULTRA-FAST: Marqo E-commerce with OpenCLIP (Multiprocessing)")
 print("="*80)
 
 # Configuration
@@ -56,83 +56,91 @@ def download_image(url, timeout=5, max_retries=2):
             continue
     return None
 
-def download_all_images_aggressive(df, image_dir, split_name):
-    """Aggressively download all images to disk with maximum parallelism."""
+def download_all_images_ultra_fast(df, image_dir, split_name):
+    """Ultra-fast download using multiprocessing.Pool (inspired by utils.py)."""
+    import multiprocessing
+    from functools import partial
+
     print(f"\n{'='*80}")
-    print(f"AGGRESSIVE DOWNLOAD: {split_name.upper()} IMAGES TO DISK")
+    print(f"ULTRA-FAST DOWNLOAD: {split_name.upper()} IMAGES")
     print(f"{'='*80}")
 
     # Create image directory
     os.makedirs(image_dir, exist_ok=True)
 
-    # Track download results
-    downloaded = []
-    failed = []
-
-    def download_single_image(args):
-        """Download a single image with retries."""
-        idx, row = args
-        image_path = os.path.join(image_dir, f"{idx}.png")  # PNG for lossless quality
+    def download_single_image(idx, row, savefolder):
+        """Download a single image (utils.py style with better error handling)."""
+        image_link = row['image_link']
+        filename = f"{idx}.png"  # Use PNG for lossless quality
+        image_save_path = os.path.join(savefolder, filename)
 
         # Skip if already downloaded
-        if os.path.exists(image_path):
-            return idx, True, "already_exists"
+        if os.path.exists(image_save_path):
+            return f"SKIP: {idx}"
 
-        # Download image with retries
-        img = download_image(row['image_link'])
-        if img is not None:
+        # Download with retries (improved version)
+        for attempt in range(3):  # 3 retries
             try:
-                img.save(image_path, 'PNG')  # Lossless PNG, not JPEG
-                return idx, True, "downloaded"
+                response = requests.get(image_link, timeout=10, stream=True)
+                if response.status_code == 200:
+                    img = Image.open(BytesIO(response.content)).convert('RGB')
+                    img.save(image_save_path, 'PNG')  # Lossless PNG
+                    return f"SUCCESS: {idx}"
+                else:
+                    continue
             except Exception as e:
-                return idx, False, f"save_error: {str(e)}"
-        else:
-            return idx, False, "download_failed"
+                if attempt == 2:  # Last attempt
+                    return f"FAILED: {idx} - {str(e)}"
+                continue
 
-    # Aggressive parallel downloading (32 workers for maximum speed)
-    print(f"Downloading {len(df)} images using 32 parallel workers...")
+        return f"FAILED: {idx}"
+
+    # Ultra-fast download using multiprocessing (100 processes like utils.py)
+    print(f"Downloading {len(df)} images using multiprocessing.Pool(100)...")
     print(f"Target directory: {image_dir}")
     print(f"Format: PNG (lossless, high quality)")
-    print(f"Estimated space needed: ~{len(df) * 150 / 1024:.1f} MB (PNG)")
+    print(f"Estimated space needed: ~{len(df) * 150 / 1024:.1f} MB")
     print()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
-        # Submit all downloads
-        futures = [executor.submit(download_single_image, (idx, row))
-                  for idx, row in df.iterrows()]
+    download_partial = partial(download_single_image, savefolder=image_dir)
 
-        # Progress tracking
-        completed = 0
-        for future in concurrent.futures.as_completed(futures):
-            idx, success, reason = future.result()
-            completed += 1
-            if success:
-                downloaded.append(idx)
-            else:
-                failed.append((idx, reason))
+    results = []
+    with multiprocessing.Pool(100) as pool:
+        # Use imap for better memory efficiency
+        for result in pool.starmap(download_partial, df.iterrows()):
+            results.append(result)
 
-            # Progress update every 200 images
-            if completed % 200 == 0:
-                success_rate = len(downloaded) / completed * 100
-                print(f"Progress: {completed}/{len(df)} | Success: {len(downloaded)} ({success_rate:.1f}%) | Failed: {len(failed)}")
+            # Progress update every 500 results
+            if len(results) % 500 == 0:
+                success_count = sum(1 for r in results if r.startswith("SUCCESS"))
+                skip_count = sum(1 for r in results if r.startswith("SKIP"))
+                fail_count = sum(1 for r in results if r.startswith("FAILED"))
+                success_rate = (success_count / len(results)) * 100
+                print(f"Progress: {len(results)}/{len(df)} | Success: {success_count} | Skip: {skip_count} | Fail: {fail_count} ({success_rate:.1f}%)")
 
-    # Summary
-    success_rate = len(downloaded) / len(df) * 100
+    # Final summary
+    success_count = sum(1 for r in results if r.startswith("SUCCESS"))
+    skip_count = sum(1 for r in results if r.startswith("SKIP"))
+    fail_count = sum(1 for r in results if r.startswith("FAILED"))
+
+    success_rate = success_count / len(df) * 100
     print(f"\n{'='*80}")
     print(f"DOWNLOAD SUMMARY: {split_name.upper()}")
     print(f"{'='*80}")
     print(f"Total images: {len(df)}")
-    print(f"Downloaded: {len(downloaded)} ({success_rate:.1f}%)")
-    print(f"Failed: {len(failed)} ({100-success_rate:.1f}%)")
-    print(f"Disk space used: ~{len(downloaded) * 150 / 1024:.1f} MB (PNG)")
+    print(f"Downloaded: {success_count} ({success_rate:.1f}%)")
+    print(f"Skipped (already exist): {skip_count}")
+    print(f"Failed: {fail_count} ({100-success_rate:.1f}%)")
+    print(f"Disk space used: ~{success_count * 150 / 1024:.1f} MB (PNG)")
 
-    if failed:
+    if fail_count > 0:
         print(f"\nFirst 5 failures:")
-        for idx, reason in failed[:5]:
-            print(f"  Image {idx}: {reason}")
+        failed_results = [r for r in results if r.startswith("FAILED")][:5]
+        for result in failed_results:
+            print(f"  {result}")
 
     print(f"{'='*80}")
-    return downloaded, failed
+    return success_count, fail_count
 
 def load_image_from_disk(image_path):
     """Load image from local disk."""
@@ -190,10 +198,10 @@ def process_dataset_hybrid(csv_path, output_path, model, preprocess, tokenizer, 
     split_name = 'train' if 'train' in csv_path else 'test'
     image_dir = f'/tmp/{split_name}_images'
 
-    # PHASE 1: Aggressive download to disk
-    downloaded, failed = download_all_images_aggressive(df, image_dir, split_name)
+    # PHASE 1: Ultra-fast download to disk
+    downloaded_count, failed_count = download_all_images_ultra_fast(df, image_dir, split_name)
 
-    if len(downloaded) == 0:
+    if downloaded_count == 0:
         print("❌ No images downloaded, cannot proceed")
         return None, 0, len(df)
 
@@ -251,7 +259,7 @@ def process_dataset_hybrid(csv_path, output_path, model, preprocess, tokenizer, 
     print(f"COMPLETED: {csv_path}")
     print(f"{'='*80}")
     print(f"Total processed: {n_samples}")
-    print(f"Downloaded: {len(downloaded)}")
+    print(f"Downloaded: {downloaded_count}")
     print(f"Successful embeddings: {successful} ({(successful/n_samples)*100:.1f}%)")
     print(f"Failed: {n_samples - successful} ({((n_samples - successful)/n_samples)*100:.1f}%)")
     print(f"Saved to: {output_path}")
