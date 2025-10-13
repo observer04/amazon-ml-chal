@@ -186,8 +186,9 @@ print(f"  Median: ${np.median(test_pred):.2f}")
 # ============================================================================
 print("\n[6/6] Creating submission file...")
 
+# Create submission
 submission = pd.DataFrame({
-    'id': range(len(test_pred)),
+    'sample_id': test_df['sample_id'],
     'price': test_pred
 })
 
