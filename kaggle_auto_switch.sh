@@ -6,6 +6,23 @@ echo "AUTO-SWITCH: Marqo-OpenCLIP → Marqo-Transformers → FashionSigLIP → G
 echo "=================================================================================="
 echo
 
+echo "📦 Installing required packages..."
+echo "Command: pip install -r requirements.txt --quiet"
+pip install -r requirements.txt --quiet
+
+if [ $? -ne 0 ]; then
+    echo "❌ FAILED: Package installation failed"
+    echo "🔄 Trying individual package installation..."
+    pip install open_clip_torch>=2.20.0 --quiet
+    if [ $? -ne 0 ]; then
+        echo "❌ FAILED: open_clip_torch installation failed"
+        exit 1
+    fi
+fi
+
+echo "✅ Packages installed successfully"
+echo
+
 echo "🔄 STEP 1: Testing Marqo-ecommerce with OpenCLIP (PROPER WAY)..."
 echo "Command: python kaggle_marqo_openclip_fixed.py"
 echo

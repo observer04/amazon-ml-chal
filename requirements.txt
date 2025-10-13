@@ -10,6 +10,7 @@ scipy>=1.10.0
 # Deep Learning
 torch>=2.0.0
 torchvision>=0.15.0
+open_clip_torch>=2.20.0  # For Marqo-ecommerce model (OpenCLIP)
 
 # Gradient Boosting
 lightgbm>=4.0.0
