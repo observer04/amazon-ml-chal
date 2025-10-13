@@ -32,12 +32,29 @@ else
         exit 0
     else
         echo
-        echo "❌ FAILED: Both models failed!"
-        echo "🔍 TROUBLESHOOTING:"
-        echo "1. Check GPU memory: nvidia-smi"
-        echo "2. Check internet: ping -c 3 huggingface.co"
-        echo "3. Check disk space: df -h"
-        echo "4. Try CPU-only: export CUDA_VISIBLE_DEVICES=''"
-        exit 1
+        echo "❌ FAILED: FashionSigLIP also failed!"
+        echo "🔄 STEP 3: Switching to Google SigLIP (Plan C)..."
+        echo "Command: python kaggle_plan_c_google_siglip.py"
+        echo
+
+        # Try Google SigLIP
+        if python kaggle_plan_c_google_siglip.py; then
+            echo
+            echo "✅ SUCCESS: Google SigLIP worked!"
+            echo "Embeddings saved as outputs/train_google_siglip_embeddings.npy"
+            echo "and outputs/test_google_siglip_embeddings.npy"
+            exit 0
+        else
+            echo
+            echo "❌ FAILED: All three models failed!"
+            echo "🔍 TROUBLESHOOTING:"
+            echo "1. Check GPU memory: nvidia-smi"
+            echo "2. Check internet: ping -c 3 huggingface.co"
+            echo "3. Check disk space: df -h"
+            echo "4. Try CPU-only: export CUDA_VISIBLE_DEVICES=''"
+            echo "5. Check transformers version: pip show transformers"
+            echo "6. Try ResNet50 as last resort"
+            exit 1
+        fi
     fi
 fi

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-PLAN B v2: Extract Marqo-FashionSigLIP embeddings
-==================================================
+PLAN C: Google SigLIP - Reliable Fallback
+==========================================
 
 Why this model:
-- 400M parameters (well under 8B limit)
-- Trained on 1M+ fashion/e-commerce products
-- SigLIP-based (proven architecture without meta tensor issues)
-- Used in production by leboncoin marketplace
-- 768-dim embeddings optimized for product similarity
+- 400M parameters (under 8B limit)
+- Standard Google SigLIP model (not custom Marqo code)
+- No open_clip/timm dependencies that cause meta tensor issues
+- 1152-dim embeddings (higher dimensional than FashionSigLIP)
+- Trained on WebLI dataset (web-scale image-text pairs)
 
-Fallback from: Marqo-ecommerce-L (meta tensor loading issues)
-Alternative to: ResNet50 (too generic, not e-commerce specific)
+Fallback from: Marqo models (both have meta tensor issues)
+Alternative to: Generic ImageNet models
 
-Expected correlation: 0.03-0.08 (3-8x better than CLIP's 0.0089)
+Expected correlation: 0.02-0.06 (2-6x better than CLIP's 0.0089)
 """
 
 import os
@@ -35,13 +35,13 @@ from tqdm import tqdm
 import sys
 
 print("="*80)
-print("PLAN B v2: Marqo-FashionSigLIP Embedding Extraction")
+print("PLAN C: Google SigLIP Embedding Extraction")
 print("="*80)
 
 # Configuration
-MODEL_NAME = "Marqo/marqo-fashionSigLIP"
+MODEL_NAME = "google/siglip-so400m-patch14-384"
 BATCH_SIZE = 32
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = 1152  # SigLIP has 1152-dim embeddings
 MAX_IMAGES = None  # None = process all images
 
 def download_image(url, timeout=5, max_retries=2):
@@ -64,13 +64,13 @@ def extract_embeddings_batch(images, model, processor, device):
         # Process images
         inputs = processor(images=images, return_tensors="pt", padding=True)
         inputs = {k: v.to(device) for k, v in inputs.items()}
-        
+
         # Extract features
         with torch.no_grad():
             image_features = model.get_image_features(**inputs)
             # Normalize embeddings
             embeddings = image_features / image_features.norm(dim=-1, keepdim=True)
-        
+
         return embeddings.cpu().numpy()
     except Exception as e:
         print(f"Batch processing error: {e}")
@@ -81,32 +81,32 @@ def process_dataset(csv_path, output_path, model, processor, device):
     print(f"\n{'='*80}")
     print(f"Processing: {csv_path}")
     print(f"{'='*80}")
-    
+
     # Load data
     df = pd.read_csv(csv_path)
     n_samples = len(df) if MAX_IMAGES is None else min(MAX_IMAGES, len(df))
     df = df.head(n_samples)
-    
+
     print(f"Total samples: {n_samples}")
     print()
-    
+
     # Initialize embeddings array
     embeddings = np.zeros((n_samples, EMBEDDING_DIM), dtype=np.float32)
-    
+
     # Process in batches
     batch_images = []
     batch_indices = []
     successful = 0
     failed = 0
-    
+
     for idx, row in tqdm(df.iterrows(), total=len(df), desc="Extracting embeddings"):
         # Download image
         img = download_image(row['image_link'])
-        
+
         if img is not None:
             batch_images.append(img)
             batch_indices.append(idx)
-            
+
             # Process batch when full
             if len(batch_images) == BATCH_SIZE:
                 batch_embeddings = extract_embeddings_batch(batch_images, model, processor, device)
@@ -116,17 +116,17 @@ def process_dataset(csv_path, output_path, model, processor, device):
                     successful += len(batch_indices)
                 else:
                     failed += len(batch_indices)
-                
+
                 batch_images = []
                 batch_indices = []
         else:
             failed += 1
-        
+
         # Progress update every 1000 images
         if (idx + 1) % 1000 == 0:
             success_rate = (successful / (idx + 1)) * 100
             print(f"Progress: {idx+1}/{n_samples} | Success: {successful} ({success_rate:.1f}%) | Failed: {failed}")
-    
+
     # Process remaining images
     if batch_images:
         batch_embeddings = extract_embeddings_batch(batch_images, model, processor, device)
@@ -136,10 +136,10 @@ def process_dataset(csv_path, output_path, model, processor, device):
             successful += len(batch_indices)
         else:
             failed += len(batch_indices)
-    
+
     # Save embeddings
     np.save(output_path, embeddings)
-    
+
     print(f"\n{'='*80}")
     print(f"COMPLETED: {csv_path}")
     print(f"{'='*80}")
@@ -150,7 +150,7 @@ def process_dataset(csv_path, output_path, model, processor, device):
     print(f"Shape: {embeddings.shape}")
     print(f"Size: {embeddings.nbytes / 1e6:.1f} MB")
     print()
-    
+
     return embeddings, successful, failed
 
 def compute_correlations(train_embeddings, train_csv):
@@ -158,18 +158,18 @@ def compute_correlations(train_embeddings, train_csv):
     print(f"\n{'='*80}")
     print("CORRELATION ANALYSIS")
     print(f"{'='*80}")
-    
+
     # Load target prices
     df = pd.read_csv(train_csv)
     prices = df['PRODUCT_LENGTH'].values[:len(train_embeddings)]
-    
+
     print(f"Price statistics:")
     print(f"  Mean: {prices.mean():.2f}")
     print(f"  Std: {prices.std():.2f}")
     print(f"  Min: {prices.min():.2f}")
     print(f"  Max: {prices.max():.2f}")
     print()
-    
+
     # Compute correlations for each embedding dimension
     correlations = []
     for i in range(train_embeddings.shape[1]):
@@ -178,27 +178,27 @@ def compute_correlations(train_embeddings, train_csv):
             correlations.append(abs(corr))
         else:
             correlations.append(0)
-    
+
     correlations = np.array(correlations)
-    
-    print(f"FashionSigLIP Embedding Correlations:")
+
+    print(f"Google SigLIP Embedding Correlations:")
     print(f"  Max correlation: {correlations.max():.6f}")
     print(f"  Mean correlation: {correlations.mean():.6f}")
     print(f"  Median correlation: {np.median(correlations):.6f}")
     print(f"  Dims with |corr| > 0.05: {(correlations > 0.05).sum()}")
     print(f"  Dims with |corr| > 0.02: {(correlations > 0.02).sum()}")
     print()
-    
+
     # Compare to baselines
     print("COMPARISON TO BASELINES:")
     print(f"  CLIP baseline: 0.0089 (max correlation)")
     print(f"  Text baseline: 0.1089 (max correlation)")
-    print(f"  FashionSigLIP: {correlations.max():.4f}")
+    print(f"  Google SigLIP: {correlations.max():.4f}")
     print()
-    
+
     improvement_vs_clip = ((correlations.max() - 0.0089) / 0.0089) * 100
     print(f"Improvement vs CLIP: {improvement_vs_clip:+.1f}%")
-    
+
     # Verdict
     print(f"\n{'='*80}")
     print("VERDICT:")
@@ -214,7 +214,7 @@ def compute_correlations(train_embeddings, train_csv):
         print("   Improvement uncertain, try other methods")
     print(f"{'='*80}")
     print()
-    
+
     return correlations
 
 def main():
@@ -222,93 +222,53 @@ def main():
         print("\n" + "="*80)
         print("PHASE 1: MODEL LOADING")
         print("="*80)
-        
+
         print(f"Loading {MODEL_NAME}...")
         print("Model info:")
-        print("  - Type: SigLIP vision encoder")
+        print("  - Type: Google SigLIP vision encoder")
         print("  - Parameters: ~400M")
-        print("  - Training: 1M+ fashion/e-commerce products")
-        print("  - Output: 768-dim normalized embeddings")
+        print("  - Training: WebLI dataset (web-scale)")
+        print("  - Output: 1152-dim normalized embeddings")
         print()
-        
-        # Multi-strategy model loading (same as Marqo script)
+
+        # Device setup
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Strategy 1: Try loading directly to device
+
+        # Try loading with different strategies
         try:
-            print("Attempting direct load to device...")
+            print("Attempting standard load...")
             model = AutoModel.from_pretrained(
-                MODEL_NAME, 
-                trust_remote_code=True,
+                MODEL_NAME,
                 torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
-                device_map=device
-            )
-            print("✅ Strategy 1 successful: Direct device_map")
+                low_cpu_mem_usage=False  # Disable meta tensors
+            ).to(device)
+            print("✅ Standard load successful")
         except Exception as e1:
-            print(f"Direct load failed: {str(e1)[:100]}...")
-            
-            # Strategy 2: Load to CPU first, then move
-            print("Direct load failed, trying CPU first...")
+            print(f"Standard load failed: {str(e1)[:100]}...")
             try:
+                print("Trying CPU load then move...")
                 model = AutoModel.from_pretrained(
-                    MODEL_NAME, 
-                    trust_remote_code=True,
-                    torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
-                    low_cpu_mem_usage=False  # Disable meta tensors entirely
-                )
-                print(f"✅ Loaded to CPU, moving to {device}...")
-                model = model.to(device)
-                print(f"✅ Strategy 2 successful: CPU first, then move")
+                    MODEL_NAME,
+                    torch_dtype=torch.float32,
+                    low_cpu_mem_usage=False
+                ).to(device)
+                print("✅ CPU load successful")
             except Exception as e2:
                 print(f"CPU load failed: {str(e2)[:100]}...")
-                
-                # Strategy 3: Force no meta device usage
-                print("Standard load failed, trying no-meta approach...")
-                try:
-                    # Set environment to avoid meta tensors
-                    os.environ['TRANSFORMERS_NO_META'] = '1'
-                    
-                    model = AutoModel.from_pretrained(
-                        MODEL_NAME,
-                        trust_remote_code=True,
-                        torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
-                        low_cpu_mem_usage=False,
-                        device_map=None  # No device mapping
-                    ).to(device)
-                    print("✅ Strategy 3 successful: No-meta approach")
-                except Exception as e3:
-                    print(f"No-meta approach failed: {str(e3)[:100]}...")
-                    
-                    # Strategy 4: Try CPU-only loading
-                    print("No-meta failed, trying CPU-only...")
-                    try:
-                        os.environ['CUDA_VISIBLE_DEVICES'] = ''
-                        cpu_device = torch.device('cpu')
-                        model = AutoModel.from_pretrained(
-                            MODEL_NAME,
-                            trust_remote_code=True,
-                            torch_dtype=torch.float32,  # Use float32 for CPU
-                            low_cpu_mem_usage=False,
-                            device_map=None
-                        ).to(cpu_device)
-                        device = cpu_device
-                        print("✅ Strategy 4 successful: CPU-only loading")
-                    except Exception as e4:
-                        print(f"CPU-only failed: {str(e4)[:100]}...")
-                        print("\n" + "="*60)
-                        print("❌ ALL FASHIONSIGLIP LOADING STRATEGIES FAILED")
-                        print("="*60)
-                        print("Even FashionSigLIP has meta tensor issues.")
-                        print("This suggests a fundamental transformers/open_clip problem.")
-                        print()
-                        print("🔄 RECOMMENDATION: Try google/siglip-so400m-patch14-384")
-                        print("   Or switch to a different model architecture")
-                        print("="*60)
-                        sys.exit(1)
-        
-        processor = AutoProcessor.from_pretrained(MODEL_NAME, trust_remote_code=True)
+                print("\n" + "="*60)
+                print("❌ GOOGLE SIGLIP LOADING FAILED")
+                print("="*60)
+                print("Even Google SigLIP has issues.")
+                print("This suggests a fundamental environment problem.")
+                print()
+                print("🔄 RECOMMENDATION: Try ResNet50 or other architectures")
+                print("   Or check Kaggle environment setup")
+                print("="*60)
+                sys.exit(1)
+
+        processor = AutoProcessor.from_pretrained(MODEL_NAME)
         model.eval()
-        
+
         print(f"✅ Model loaded successfully on {device}")
         print(f"Device: {device}")
         print(f"CUDA available: {torch.cuda.is_available()}")
@@ -316,30 +276,30 @@ def main():
             print(f"GPU: {torch.cuda.get_device_name(0)}")
             print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
         print()
-        
+
         # Process datasets
         print("\n" + "="*80)
         print("PHASE 2: EMBEDDING EXTRACTION")
         print("="*80)
-        
+
         train_embeddings, train_success, train_fail = process_dataset(
             'dataset/train.csv',
-            'outputs/train_fashion_siglip_embeddings.npy',
+            'outputs/train_google_siglip_embeddings.npy',
             model, processor, device
         )
-        
+
         test_embeddings, test_success, test_fail = process_dataset(
             'dataset/test.csv',
-            'outputs/test_fashion_siglip_embeddings.npy',
+            'outputs/test_google_siglip_embeddings.npy',
             model, processor, device
         )
-        
+
         # Correlation analysis
         print("\n" + "="*80)
         print("PHASE 3: CORRELATION ANALYSIS")
         print("="*80)
         correlations = compute_correlations(train_embeddings, 'dataset/train.csv')
-        
+
         # Summary
         print("\n" + "="*80)
         print("EXECUTION SUMMARY")
@@ -349,10 +309,10 @@ def main():
         print(f"Test: {test_success}/{test_success+test_fail} images processed")
         print(f"Max correlation: {correlations.max():.6f}")
         print(f"Output files:")
-        print(f"  - outputs/train_fashion_siglip_embeddings.npy")
-        print(f"  - outputs/test_fashion_siglip_embeddings.npy")
+        print(f"  - outputs/train_google_siglip_embeddings.npy")
+        print(f"  - outputs/test_google_siglip_embeddings.npy")
         print("="*80)
-        
+
     except Exception as e:
         print("\n" + "="*80)
         print("❌ FAILED")
