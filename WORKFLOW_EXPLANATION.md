@@ -22,8 +22,10 @@ The script uses Python's `tee` output to capture **all stdout/stderr** into `KAG
 
 ### On Kaggle:
 ```bash
-wget https://raw.githubusercontent.com/observer04/amazon-ml-chal/main/kaggle_extract_marqo_embeddings.py && python kaggle_extract_marqo_embeddings.py
+cp /kaggle/input/amazon-ml-chal/kaggle_extract_marqo_embeddings.py . && python kaggle_extract_marqo_embeddings.py
 ```
+
+**Setup:** Clone repo `observer04/amazon-ml-chal` as input dataset in Kaggle notebook
 
 Walk away. Come back in 30-45 minutes.
 

@@ -5,15 +5,15 @@
 ### Setup Kaggle Notebook:
 1. Create new notebook at kaggle.com/code
 2. Enable GPU (T4 or better)
-3. Add dataset: `amazon-ml-challenge-2024`
+3. Clone your repo as input: `observer04/amazon-ml-chal` (will be at `/kaggle/input/amazon-ml-chal/`)
 4. Set Internet ON
 
 ### Single Command:
 ```bash
-wget https://raw.githubusercontent.com/observer04/amazon-ml-chal/main/kaggle_extract_marqo_embeddings.py && python kaggle_extract_marqo_embeddings.py
+cp /kaggle/input/amazon-ml-chal/kaggle_extract_marqo_embeddings.py . && python kaggle_extract_marqo_embeddings.py
 ```
 
-**Note:** Script automatically writes all output to `KAGGLE_RUN_RESULTS.md` - no manual work needed!
+**Note:** Script reads from `/kaggle/input/amazon-ml-chal/dataset/train.csv` and automatically writes all output to `KAGGLE_RUN_RESULTS.md` - no manual work needed!
 
 ### Expected Output:
 - `train_marqo_embeddings.npy` (~300MB)
