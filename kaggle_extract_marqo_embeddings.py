@@ -18,7 +18,7 @@ This script:
 6. Writes detailed results to KAGGLE_RUN_RESULTS.md
 
 Usage on Kaggle:
-    python kaggle_extract_marqo_embeddings.py
+    python kaggle_extract_marqo_embeddings.py > KAGGLE_RUN_RESULTS.md 2>&1
 """
 
 import os
@@ -27,6 +27,32 @@ import time
 import subprocess
 from datetime import datetime
 import traceback
+
+# Redirect all output to both console and file
+class TeeOutput:
+    def __init__(self, *files):
+        self.files = files
+    def write(self, data):
+        for f in self.files:
+            f.write(data)
+            f.flush()
+    def flush(self):
+        for f in self.files:
+            f.flush()
+
+# Open results file and tee output
+results_file = open('/kaggle/working/KAGGLE_RUN_RESULTS.md', 'w')
+original_stdout = sys.stdout
+original_stderr = sys.stderr
+sys.stdout = TeeOutput(sys.stdout, results_file)
+sys.stderr = TeeOutput(sys.stderr, results_file)
+
+# Print markdown header
+print("# KAGGLE RUN RESULTS: Marqo Embedding Extraction")
+print(f"**Started:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"**Script:** kaggle_extract_marqo_embeddings.py")
+print()
+print("```")
 
 # Phase 1: Setup and Installation
 print("="*80)
@@ -234,128 +260,62 @@ except Exception as e:
     print(f"✗ Correlation analysis failed: {e}")
     traceback.print_exc()
 
-# Phase 6: Write Results
+# Phase 6: Final Summary
 print("\n" + "="*80)
-print("PHASE 6: WRITE RESULTS")
+print("PHASE 6: FINAL SUMMARY")
 print("="*80)
 
 total_time = time.time() - start_time
 
-results_content = f"""# KAGGLE RUN RESULTS: Marqo Embedding Extraction
-**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
-**Script:** kaggle_extract_marqo_embeddings.py  
-**Total Time:** {total_time:.1f}s ({total_time/60:.1f} minutes)
+print(f"\n📊 EXECUTION SUMMARY:")
+print(f"  Total time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
+print(f"  Device: {device}")
+print(f"  Train samples: {len(df_train):,}")
+print(f"  Test samples: {len(df_test):,}")
+print(f"  Embedding dim: 1024")
 
-## CONFIGURATION
-- **Model:** Marqo/marqo-ecommerce-embeddings-L
-- **Parameters:** 652M
-- **Embedding Dim:** 1024
-- **Device:** {device}
-- **PyTorch:** {torch.__version__}
+print(f"\n📈 KEY METRICS:")
+print(f"\n📈 KEY METRICS:")
+print(f"  Max correlation: {max_corr:.4f}")
+print(f"  CLIP baseline: 0.0089")
+print(f"  Improvement: {(max_corr / 0.0089):.1f}x")
 
-## DATA
-- **Train samples:** {len(df_train):,}
-- **Test samples:** {len(df_test):,}
-- **Train failed:** {len(train_failed)} ({len(train_failed)/len(df_train)*100:.2f}%)
-- **Test failed:** {len(test_failed)} ({len(test_failed)/len(df_test)*100:.2f}%)
+print(f"\n📁 OUTPUT FILES:")
+print(f"  ✓ train_marqo_embeddings.npy ({train_embeddings.nbytes / 1024 / 1024:.1f} MB)")
+print(f"  ✓ test_marqo_embeddings.npy ({test_embeddings.nbytes / 1024 / 1024:.1f} MB)")
+print(f"  ✓ KAGGLE_RUN_RESULTS.md (this file)")
 
-## TIMING
-- **Model load:** {model_start:.1f}s
-- **Train extraction:** {train_time:.1f}s ({train_time/len(df_train):.3f}s per image)
-- **Test extraction:** {test_time:.1f}s ({test_time/len(df_test):.3f}s per image)
-- **Total:** {total_time:.1f}s
-
-## EMBEDDINGS
-### Train Embeddings
-- **Shape:** {train_embeddings.shape}
-- **Mean:** {train_embeddings.mean():.4f}
-- **Std:** {train_embeddings.std():.4f}
-- **Min:** {train_embeddings.min():.4f}
-- **Max:** {train_embeddings.max():.4f}
-
-### Test Embeddings
-- **Shape:** {test_embeddings.shape}
-- **Mean:** {test_embeddings.mean():.4f}
-- **Std:** {test_embeddings.std():.4f}
-- **Min:** {test_embeddings.min():.4f}
-- **Max:** {test_embeddings.max():.4f}
-
-## CORRELATION ANALYSIS
-### Statistics
-- **Max correlation:** {max_corr:.4f}
-- **Top 10 mean:** {top10_mean:.4f}
-- **Mean correlation:** {mean_corr:.4f}
-- **Median correlation:** {median_corr:.4f}
-
-### Top 10 Dimensions
-"""
-
-for i, (dim, corr, pval) in enumerate(correlations[:10], 1):
-    results_content += f"- **Dim {dim}:** corr={corr:.4f}, p-value={pval:.4e}\n"
-
-results_content += f"""
-### Comparison to Baselines
-- **CLIP (previous):** max_corr = 0.0089
-- **Text embeddings:** max_corr = 0.1089
-- **Marqo (this run):** max_corr = {max_corr:.4f}
-- **Improvement over CLIP:** {(max_corr / 0.0089 - 1) * 100:.1f}%
-
-## VERDICT
-"""
-
+print(f"\n🎯 VERDICT:")
 if max_corr > 0.05:
-    results_content += f"""
-✅ **SUCCESS!** Marqo embeddings show {(max_corr/0.0089):.1f}x better correlation than CLIP.
-
-**NEXT STEPS:**
-1. Use these embeddings in training
-2. Expected improvement: 5-8% SMAPE reduction
-3. Target: 50-52% SMAPE (from current 57.75%)
-"""
+    print(f"  ✅ SUCCESS! Use these embeddings in training.")
+    print(f"  Expected improvement: 5-8% SMAPE reduction")
+    print(f"  Target: 50-52% SMAPE (from 57.75%)")
 elif max_corr > 0.02:
-    results_content += f"""
-⚠️ **MODERATE** improvement over CLIP ({(max_corr/0.0089):.1f}x better).
-
-**NEXT STEPS:**
-1. Still worth testing in model
-2. Expected improvement: 2-4% SMAPE reduction
-3. May need ensemble with other features
-"""
+    print(f"  ⚠️  MODERATE. Worth testing in model.")
+    print(f"  Expected improvement: 2-4% SMAPE reduction")
 else:
-    results_content += f"""
-❌ **WEAK SIGNAL** - Only {(max_corr/0.0089):.1f}x better than CLIP.
+    print(f"  ❌ WEAK SIGNAL. Try alternative approaches.")
+    print(f"  Consider: aesthetic scorer or image metadata")
 
-**NEXT STEPS:**
-1. Try alternative: Image quality features (aesthetic scorer)
-2. Or: Use image metadata (resolution, aspect ratio)
-3. Or: Accept images don't help much for this task
-"""
+print(f"\n✅ SCRIPT COMPLETED at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print("```")
+print()
+print("---")
+print()
+print("## Next Steps")
+print()
+if max_corr > 0.02:
+    print("1. Download `train_marqo_embeddings.npy` and `test_marqo_embeddings.npy`")
+    print("2. Push this file to GitHub: `git add KAGGLE_RUN_RESULTS.md && git commit -m 'Marqo results' && git push`")
+    print("3. Wait for Phase 2 training script")
+else:
+    print("1. Push this file to GitHub: `git add KAGGLE_RUN_RESULTS.md && git commit -m 'Marqo results' && git push`")
+    print("2. Discuss alternative image feature strategies")
 
-results_content += f"""
-## OUTPUT FILES
-- ✓ `/kaggle/working/train_marqo_embeddings.npy` ({train_embeddings.nbytes / 1024 / 1024:.1f} MB)
-- ✓ `/kaggle/working/test_marqo_embeddings.npy` ({test_embeddings.nbytes / 1024 / 1024:.1f} MB)
+# Close tee output
+sys.stdout = original_stdout
+sys.stderr = original_stderr
+results_file.close()
 
-## ERRORS
-Train failed indices (first 20): {train_failed[:20]}
-Test failed indices (first 20): {test_failed[:20]}
-
----
-**Script completed successfully at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}**
-"""
-
-# Write results
-with open('/kaggle/working/KAGGLE_RUN_RESULTS.md', 'w') as f:
-    f.write(results_content)
-
-print("✓ Results written to KAGGLE_RUN_RESULTS.md")
-
-print("\n" + "="*80)
-print("✅ EXTRACTION COMPLETE!")
-print("="*80)
-print(f"\nTotal time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
-print(f"Files created:")
-print(f"  - train_marqo_embeddings.npy ({train_embeddings.nbytes / 1024 / 1024:.1f} MB)")
-print(f"  - test_marqo_embeddings.npy ({test_embeddings.nbytes / 1024 / 1024:.1f} MB)")
-print(f"  - KAGGLE_RUN_RESULTS.md")
-print(f"\nNext: Push results to GitHub, then run training script")
+print(f"\n✅ Results saved to /kaggle/working/KAGGLE_RUN_RESULTS.md")
+print(f"Download this file and push to GitHub!")

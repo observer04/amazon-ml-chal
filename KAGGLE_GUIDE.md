@@ -13,19 +13,23 @@
 wget https://raw.githubusercontent.com/observer04/amazon-ml-chal/main/kaggle_extract_marqo_embeddings.py && python kaggle_extract_marqo_embeddings.py
 ```
 
+**Note:** Script automatically writes all output to `KAGGLE_RUN_RESULTS.md` - no manual work needed!
+
 ### Expected Output:
 - `train_marqo_embeddings.npy` (~300MB)
 - `test_marqo_embeddings.npy` (~300MB)  
-- `KAGGLE_RUN_RESULTS.md` (detailed analysis)
+- `KAGGLE_RUN_RESULTS.md` (auto-generated with all logs + analysis)
 
 ### After Execution:
-1. Download `KAGGLE_RUN_RESULTS.md` from Kaggle
-2. Commit and push to GitHub:
+1. Download `KAGGLE_RUN_RESULTS.md` from `/kaggle/working/`
+2. **Replace** local version and push:
    ```bash
+   # In local repo
    git add KAGGLE_RUN_RESULTS.md
    git commit -m "Results: Marqo embedding extraction"
    git push origin main
    ```
+3. AI pulls and analyzes results, creates Phase 2 script
 
 ---
 
