@@ -95,35 +95,57 @@ def download_all_images_ultra_fast(df, image_dir, split_name):
     # Create image directory
     os.makedirs(image_dir, exist_ok=True)
 
-    # Ultra-fast download using multiprocessing (100 processes like utils.py)
-    print(f"Downloading {len(df)} images using multiprocessing.Pool(100)...")
+    # Ultra-fast download using multiprocessing (reduced from 100 to 64 for stability)
+    print(f"Downloading {len(df)} images using multiprocessing.Pool(64)...")
     print(f"Target directory: {image_dir}")
     print(f"Format: PNG (lossless, high quality)")
     print(f"Estimated space needed: ~{len(df) * 150 / 1024:.1f} MB")
+    print("Starting download... (this may take a few minutes)")
     print()
 
     download_partial = partial(download_single_image, savefolder=image_dir)
 
     results = []
-    with multiprocessing.Pool(100) as pool:
-        # Use imap for better memory efficiency
-        for result in pool.starmap(download_partial, df.iterrows()):
+    try:
+        with multiprocessing.Pool(processes=64) as pool:  # Reduced from 100 to 64
+            print("🔄 Pool created, starting starmap...")
+            # Use imap_unordered for better performance and progress tracking
+            for result in pool.starmap(download_partial, df.iterrows()):
+                results.append(result)
+
+                # Progress update every 200 results (more frequent)
+                if len(results) % 200 == 0:
+                    success_count = sum(1 for r in results if r.startswith("SUCCESS"))
+                    skip_count = sum(1 for r in results if r.startswith("SKIP"))
+                    fail_count = sum(1 for r in results if r.startswith("FAILED"))
+                    success_rate = (success_count / len(results)) * 100 if len(results) > 0 else 0
+                    print(f"Progress: {len(results)}/{len(df)} | Success: {success_count} | Skip: {skip_count} | Fail: {fail_count} ({success_rate:.1f}%)")
+
+            print("✅ Starmap completed")
+
+    except Exception as e:
+        print(f"❌ Multiprocessing error: {e}")
+        print("🔄 Falling back to sequential download...")
+
+        # Fallback to sequential download
+        results = []
+        for idx, row in df.iterrows():
+            result = download_single_image(idx, row, image_dir)
             results.append(result)
 
-            # Progress update every 500 results
-            if len(results) % 500 == 0:
+            if len(results) % 100 == 0:
                 success_count = sum(1 for r in results if r.startswith("SUCCESS"))
                 skip_count = sum(1 for r in results if r.startswith("SKIP"))
                 fail_count = sum(1 for r in results if r.startswith("FAILED"))
-                success_rate = (success_count / len(results)) * 100
-                print(f"Progress: {len(results)}/{len(df)} | Success: {success_count} | Skip: {skip_count} | Fail: {fail_count} ({success_rate:.1f}%)")
+                success_rate = (success_count / len(results)) * 100 if len(results) > 0 else 0
+                print(f"Fallback Progress: {len(results)}/{len(df)} | Success: {success_count} | Skip: {skip_count} | Fail: {fail_count} ({success_rate:.1f}%)")
 
     # Final summary
     success_count = sum(1 for r in results if r.startswith("SUCCESS"))
     skip_count = sum(1 for r in results if r.startswith("SKIP"))
     fail_count = sum(1 for r in results if r.startswith("FAILED"))
 
-    success_rate = success_count / len(df) * 100
+    success_rate = success_count / len(df) * 100 if len(df) > 0 else 0
     print(f"\n{'='*80}")
     print(f"DOWNLOAD SUMMARY: {split_name.upper()}")
     print(f"{'='*80}")
