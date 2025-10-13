@@ -56,6 +56,33 @@ def download_image(url, timeout=5, max_retries=2):
             continue
     return None
 
+def download_single_image(idx, row, savefolder):
+    """Download a single image (global function for multiprocessing pickle compatibility)."""
+    image_link = row['image_link']
+    filename = f"{idx}.png"  # Use PNG for lossless quality
+    image_save_path = os.path.join(savefolder, filename)
+
+    # Skip if already downloaded
+    if os.path.exists(image_save_path):
+        return f"SKIP: {idx}"
+
+    # Download with retries (improved version)
+    for attempt in range(3):  # 3 retries
+        try:
+            response = requests.get(image_link, timeout=10, stream=True)
+            if response.status_code == 200:
+                img = Image.open(BytesIO(response.content)).convert('RGB')
+                img.save(image_save_path, 'PNG')  # Lossless PNG
+                return f"SUCCESS: {idx}"
+            else:
+                continue
+        except Exception as e:
+            if attempt == 2:  # Last attempt
+                return f"FAILED: {idx} - {str(e)}"
+            continue
+
+    return f"FAILED: {idx}"
+
 def download_all_images_ultra_fast(df, image_dir, split_name):
     """Ultra-fast download using multiprocessing.Pool (inspired by utils.py)."""
     import multiprocessing
@@ -67,33 +94,6 @@ def download_all_images_ultra_fast(df, image_dir, split_name):
 
     # Create image directory
     os.makedirs(image_dir, exist_ok=True)
-
-    def download_single_image(idx, row, savefolder):
-        """Download a single image (utils.py style with better error handling)."""
-        image_link = row['image_link']
-        filename = f"{idx}.png"  # Use PNG for lossless quality
-        image_save_path = os.path.join(savefolder, filename)
-
-        # Skip if already downloaded
-        if os.path.exists(image_save_path):
-            return f"SKIP: {idx}"
-
-        # Download with retries (improved version)
-        for attempt in range(3):  # 3 retries
-            try:
-                response = requests.get(image_link, timeout=10, stream=True)
-                if response.status_code == 200:
-                    img = Image.open(BytesIO(response.content)).convert('RGB')
-                    img.save(image_save_path, 'PNG')  # Lossless PNG
-                    return f"SUCCESS: {idx}"
-                else:
-                    continue
-            except Exception as e:
-                if attempt == 2:  # Last attempt
-                    return f"FAILED: {idx} - {str(e)}"
-                continue
-
-        return f"FAILED: {idx}"
 
     # Ultra-fast download using multiprocessing (100 processes like utils.py)
     print(f"Downloading {len(df)} images using multiprocessing.Pool(100)...")
