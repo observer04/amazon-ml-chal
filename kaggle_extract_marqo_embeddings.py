@@ -90,42 +90,51 @@ try:
             device_map=device
         )
         print("✓ Direct load successful")
-    except:
+    except Exception as e1:
+        print(f"Direct load failed: {str(e1)[:100]}...")
+        
         # Strategy 2: Load to CPU first, then move
         print("Direct load failed, trying CPU first...")
         try:
             model = AutoModel.from_pretrained(
                 model_name, 
                 trust_remote_code=True,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                low_cpu_mem_usage=False  # Disable meta tensors entirely
             )
             print(f"✓ Loaded to CPU, moving to {device}...")
             model = model.to(device)
             print(f"✓ Moved to {device}")
-        except:
-            # Strategy 3: Use to_empty() for meta tensors
-            print("Standard load failed, using to_empty() approach...")
-            with torch.device('meta'):
+        except Exception as e2:
+            print(f"CPU load failed: {str(e2)[:100]}...")
+            
+            # Strategy 3: Force no meta device usage
+            print("Standard load failed, trying no-meta approach...")
+            try:
+                # Set environment to avoid meta tensors
+                os.environ['TRANSFORMERS_NO_META'] = '1'
+                
                 model = AutoModel.from_pretrained(
                     model_name,
-                    trust_remote_code=True
-                )
-            
-            # Materialize model on target device
-            empty_model = model.to_empty(device=device)
-            
-            # Load state dict directly
-            print("Loading state dict...")
-            from transformers import AutoConfig
-            config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-            model = AutoModel.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                config=config,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                low_cpu_mem_usage=False
-            ).to(device)
-            print("✓ Loaded via state dict")
+                    trust_remote_code=True,
+                    torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                    low_cpu_mem_usage=False,
+                    device_map=None  # No device mapping
+                ).to(device)
+                print("✓ Loaded with no-meta approach")
+            except Exception as e3:
+                print(f"No-meta approach failed: {str(e3)[:100]}...")
+                print("\n" + "="*60)
+                print("❌ ALL MARQO-E COMMERCE LOADING STRATEGIES FAILED")
+                print("="*60)
+                print("This model has fundamental meta tensor compatibility issues.")
+                print("The timm library used by open_clip doesn't support meta tensors.")
+                print()
+                print("🔄 RECOMMENDATION: Switch to Marqo-FashionSigLIP")
+                print("   Command: python kaggle_plan_b_fashion_siglip.py")
+                print("   Why: Same architecture, e-commerce trained, no meta issues")
+                print("="*60)
+                sys.exit(1)
     
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     model.eval()
