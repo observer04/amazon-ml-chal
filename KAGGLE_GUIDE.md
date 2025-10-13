@@ -5,15 +5,18 @@
 ### Setup Kaggle Notebook:
 1. Create new notebook at kaggle.com/code
 2. Enable GPU (T4 or better)
-3. Clone your repo as input: `observer04/amazon-ml-chal` (will be at `/kaggle/input/amazon-ml-chal/`)
-4. Set Internet ON
+3. Enable Internet ON
+4. Clone your repo:
+   ```bash
+   cd /kaggle/working && git clone https://github.com/observer04/amazon-ml-chal.git
+   ```
 
 ### Single Command:
 ```bash
-cp /kaggle/input/amazon-ml-chal/kaggle_extract_marqo_embeddings.py . && python kaggle_extract_marqo_embeddings.py
+cd /kaggle/working/amazon-ml-chal && python kaggle_extract_marqo_embeddings.py
 ```
 
-**Note:** Script reads from `/kaggle/input/amazon-ml-chal/dataset/train.csv` and automatically writes all output to `KAGGLE_RUN_RESULTS.md` - no manual work needed!
+**Note:** Script automatically writes all output to `KAGGLE_RUN_RESULTS.md` - no manual work needed!
 
 ### Expected Output:
 - `train_marqo_embeddings.npy` (~300MB)
@@ -21,15 +24,14 @@ cp /kaggle/input/amazon-ml-chal/kaggle_extract_marqo_embeddings.py . && python k
 - `KAGGLE_RUN_RESULTS.md` (auto-generated with all logs + analysis)
 
 ### After Execution:
-1. Download `KAGGLE_RUN_RESULTS.md` from `/kaggle/working/`
-2. **Replace** local version and push:
+1. In Kaggle, commit the results file:
    ```bash
-   # In local repo
+   cd /kaggle/working/amazon-ml-chal
    git add KAGGLE_RUN_RESULTS.md
    git commit -m "Results: Marqo embedding extraction"
    git push origin main
    ```
-3. AI pulls and analyzes results, creates Phase 2 script
+2. AI pulls and analyzes results, creates Phase 2 script
 
 ---
 

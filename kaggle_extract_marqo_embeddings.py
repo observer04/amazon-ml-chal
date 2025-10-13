@@ -104,20 +104,22 @@ print("PHASE 2: LOAD DATA")
 print("="*80)
 
 try:
-    df_train = pd.read_csv('/kaggle/input/amazon-ml-chal/dataset/train.csv')
-    df_test = pd.read_csv('/kaggle/input/amazon-ml-chal/dataset/test.csv')
+    # Kaggle clones to /kaggle/working/amazon-ml-chal, data is in dataset/ folder
+    df_train = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/train.csv')
+    df_test = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/test.csv')
     print(f"✓ Train: {len(df_train):,} samples")
     print(f"✓ Test: {len(df_test):,} samples")
 except Exception as e:
     print(f"✗ Failed to load data: {e}")
-    print("Trying alternative paths...")
+    print(f"Trying alternative paths...")
     try:
-        # Try without dataset folder
-        df_train = pd.read_csv('/kaggle/input/amazon-ml-chal/train.csv')
-        df_test = pd.read_csv('/kaggle/input/amazon-ml-chal/test.csv')
-        print(f"✓ Found data in root: Train {len(df_train):,}, Test {len(df_test):,}")
+        # Fallback: try current directory
+        df_train = pd.read_csv('dataset/train.csv')
+        df_test = pd.read_csv('dataset/test.csv')
+        print(f"✓ Train: {len(df_train):,} samples")
+        print(f"✓ Test: {len(df_test):,} samples")
     except Exception as e2:
-        print(f"✗ Failed both paths: {e2}")
+        print(f"✗ Failed with both paths: {e2}")
         sys.exit(1)
 
 # Phase 3: Load Marqo Model

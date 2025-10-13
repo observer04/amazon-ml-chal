@@ -22,25 +22,26 @@ The script uses Python's `tee` output to capture **all stdout/stderr** into `KAG
 
 ### On Kaggle:
 ```bash
-cp /kaggle/input/amazon-ml-chal/kaggle_extract_marqo_embeddings.py . && python kaggle_extract_marqo_embeddings.py
-```
+# Clone repo first
+cd /kaggle/working && git clone https://github.com/observer04/amazon-ml-chal.git
 
-**Setup:** Clone repo `observer04/amazon-ml-chal` as input dataset in Kaggle notebook
+# Run extraction
+cd amazon-ml-chal && python kaggle_extract_marqo_embeddings.py
+```
 
 Walk away. Come back in 30-45 minutes.
 
 ### After Run:
-1. Download `/kaggle/working/KAGGLE_RUN_RESULTS.md`
-2. Replace local file
-3. Push to GitHub:
+1. In Kaggle terminal:
    ```bash
+   cd /kaggle/working/amazon-ml-chal
    git add KAGGLE_RUN_RESULTS.md
-   git commit -m "Marqo results"
-   git push
+   git commit -m "Marqo extraction results"
+   git push origin main
    ```
 
 ### I Do:
-1. Pull changes
+1. Pull changes: `git pull origin main`
 2. Read `KAGGLE_RUN_RESULTS.md`
 3. See correlations, timings, everything
 4. Create Phase 2 script based on results
