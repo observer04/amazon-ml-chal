@@ -1,24 +1,9 @@
 #!/usr/bin/env python3
 """
 KAGGLE PHASE 1: Extract Marqo E-commerce Image Embeddings
-==========================================================
-Single monolithic script to run on Kaggle GPU notebook.
 
-Marqo/marqo-ecommerce-embeddings-L:
-- 652M params, 1024-dim embeddings
-- Trained on 3M Amazon products + 1M Google Shopping
-- 38.9% better than Amazon-Titan on Amazon product tasks
-
-This script:
-1. Installs dependencies
-2. Downloads Marqo model
-3. Processes all 75K train + 75K test images
-4. Saves embeddings as .npy files
-5. Computes correlations with price
-6. Writes detailed results to KAGGLE_RUN_RESULTS.md
-
-Usage on Kaggle:
-    python kaggle_extract_marqo_embeddings.py > KAGGLE_RUN_RESULTS.md 2>&1
+All output goes to KAGGLE_RUN_RESULTS.md
+Console only shows: ✅ SUCCESS or ❌ FAILED <phase>
 """
 
 import os
@@ -28,304 +13,239 @@ import subprocess
 from datetime import datetime
 import traceback
 
-# Redirect all output to both console and file
-class TeeOutput:
-    def __init__(self, *files):
-        self.files = files
-    def write(self, data):
-        for f in self.files:
-            f.write(data)
-            f.flush()
-    def flush(self):
-        for f in self.files:
-            f.flush()
+# Open results file
+log_file = open('KAGGLE_RUN_RESULTS.md', 'w', buffering=1)
 
-# Open results file and tee output
-results_file = open('/kaggle/working/KAGGLE_RUN_RESULTS.md', 'w')
-original_stdout = sys.stdout
-original_stderr = sys.stderr
-sys.stdout = TeeOutput(sys.stdout, results_file)
-sys.stderr = TeeOutput(sys.stderr, results_file)
+def log(msg):
+    log_file.write(msg + '\n')
+    log_file.flush()
 
-# Print markdown header
-print("# KAGGLE RUN RESULTS: Marqo Embedding Extraction")
-print(f"**Started:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"**Script:** kaggle_extract_marqo_embeddings.py")
-print()
-print("```")
+# Start
+log("# KAGGLE RUN RESULTS: Marqo Embedding Extraction")
+log(f"**Started:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+log("```")
 
-# Phase 1: Setup and Installation
-print("="*80)
-print("PHASE 1: SETUP")
-print("="*80)
 start_time = time.time()
 
-def install_packages():
-    """Install required packages"""
-    packages = [
-        'transformers',
-        'torch',
-        'torchvision', 
-        'pillow',
-        'accelerate',
-        'sentencepiece',
-        'protobuf',
-        'scipy'
-    ]
+try:
+    # PHASE 1: Install
+    log("\n" + "="*80)
+    log("PHASE 1: INSTALL PACKAGES")
+    log("="*80)
     
-    print("\nInstalling packages...")
+    packages = ['transformers', 'torch', 'torchvision', 'pillow', 'accelerate', 
+                'sentencepiece', 'protobuf', 'scipy', 'ftfy', 'open_clip_torch']
+    
     for pkg in packages:
-        print(f"  Installing {pkg}...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
-    print("✓ All packages installed")
-
-try:
-    install_packages()
-except Exception as e:
-    print(f"✗ Installation failed: {e}")
-    sys.exit(1)
-
-# Import after installation
-import torch
-import numpy as np
-import pandas as pd
-from PIL import Image
-import requests
-from io import BytesIO
-from transformers import AutoModel, AutoProcessor
-from scipy.stats import pearsonr
-from tqdm import tqdm
-
-print(f"\n✓ Setup complete in {time.time() - start_time:.1f}s")
-
-# Phase 2: Load Data
-print("\n" + "="*80)
-print("PHASE 2: LOAD DATA")
-print("="*80)
-
-try:
-    # Kaggle clones to /kaggle/working/amazon-ml-chal, data is in dataset/ folder
-    df_train = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/train.csv')
-    df_test = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/test.csv')
-    print(f"✓ Train: {len(df_train):,} samples")
-    print(f"✓ Test: {len(df_test):,} samples")
-except Exception as e:
-    print(f"✗ Failed to load data: {e}")
-    print(f"Trying alternative paths...")
+        log(f"Installing {pkg}...")
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-q", pkg],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE
+        )
+    log("✓ All packages installed\n")
+    
+    # Import
+    import torch
+    import numpy as np
+    import pandas as pd
+    from PIL import Image
+    import requests
+    from io import BytesIO
+    from transformers import AutoModel, AutoProcessor
+    from scipy.stats import pearsonr
+    
+    # PHASE 2: Load Data
+    log("="*80)
+    log("PHASE 2: LOAD DATA")
+    log("="*80)
+    
     try:
-        # Fallback: try current directory
+        df_train = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/train.csv')
+        df_test = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/test.csv')
+        log(f"✓ Loaded from /kaggle/working/amazon-ml-chal/dataset/")
+    except:
         df_train = pd.read_csv('dataset/train.csv')
         df_test = pd.read_csv('dataset/test.csv')
-        print(f"✓ Train: {len(df_train):,} samples")
-        print(f"✓ Test: {len(df_test):,} samples")
-    except Exception as e2:
-        print(f"✗ Failed with both paths: {e2}")
-        sys.exit(1)
-
-# Phase 3: Load Marqo Model
-print("\n" + "="*80)
-print("PHASE 3: LOAD MARQO MODEL")
-print("="*80)
-
-model_start = time.time()
-
-try:
-    model_name = 'Marqo/marqo-ecommerce-embeddings-L'
-    print(f"Loading {model_name}...")
-    print("This may take 2-3 minutes (652M params)...")
+        log(f"✓ Loaded from dataset/")
     
-    # Load model without device_map to avoid accelerate issues
+    log(f"✓ Train: {len(df_train):,} samples")
+    log(f"✓ Test: {len(df_test):,} samples\n")
+    
+    # PHASE 3: Load Model
+    log("="*80)
+    log("PHASE 3: LOAD MARQO MODEL")
+    log("="*80)
+    
+    model_start = time.time()
+    model_name = 'Marqo/marqo-ecommerce-embeddings-L'
+    log(f"Loading {model_name} (652M params)...")
+    
     model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     
-    # Move to GPU if available
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
     model.eval()
     
-    print(f"✓ Model loaded on {device}")
-    print(f"✓ Load time: {time.time() - model_start:.1f}s")
+    log(f"✓ Model loaded on {device}")
+    log(f"✓ Load time: {time.time() - model_start:.1f}s\n")
     
-except Exception as e:
-    print(f"✗ Model loading failed: {e}")
-    traceback.print_exc()
-    sys.exit(1)
-
-# Phase 4: Extract Embeddings
-print("\n" + "="*80)
-print("PHASE 4: EXTRACT IMAGE EMBEDDINGS")
-print("="*80)
-
-def extract_embeddings(df, split_name):
-    """Extract embeddings for all images in dataframe"""
-    embeddings = []
-    failed_indices = []
+    # PHASE 4: Extract Embeddings
+    log("="*80)
+    log("PHASE 4: EXTRACT IMAGE EMBEDDINGS")
+    log("="*80)
     
-    print(f"\nProcessing {len(df)} {split_name} images...")
-    
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc=f"{split_name}"):
-        try:
-            # Download image
-            url = row['image_link']
-            response = requests.get(url, timeout=10)
-            img = Image.open(BytesIO(response.content)).convert("RGB")
+    def extract_embeddings(df, split_name):
+        embeddings = []
+        failed = []
+        
+        log(f"\nProcessing {len(df):,} {split_name} images...")
+        
+        for idx, row in df.iterrows():
+            try:
+                response = requests.get(row['image_link'], timeout=10)
+                img = Image.open(BytesIO(response.content)).convert("RGB")
+                
+                inputs = processor(images=[img], return_tensors="pt")
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+                
+                with torch.no_grad():
+                    features = model.get_image_features(**inputs)
+                
+                embeddings.append(features.cpu().numpy()[0])
+            except Exception as e:
+                embeddings.append(np.zeros(1024))
+                failed.append(idx)
+                if len(failed) <= 5:
+                    log(f"  Failed idx {idx}: {str(e)[:50]}")
             
-            # Process image
-            inputs = processor(images=[img], return_tensors="pt")
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-            
-            # Extract features
-            with torch.no_grad():
-                features = model.get_image_features(**inputs)
-            
-            embeddings.append(features.cpu().numpy()[0])
-            
-        except Exception as e:
-            # Failed - use zero vector
-            embeddings.append(np.zeros(1024))
-            failed_indices.append(idx)
-            
-            if len(failed_indices) <= 10:  # Log first 10 failures
-                print(f"  Failed idx {idx}: {str(e)[:50]}")
+            if (idx + 1) % 1000 == 0:
+                log(f"  Processed {idx+1:,}/{len(df):,}...")
+        
+        arr = np.array(embeddings)
+        log(f"✓ Shape: {arr.shape}")
+        log(f"✓ Failed: {len(failed)} ({len(failed)/len(df)*100:.2f}%)")
+        log(f"✓ Mean: {arr.mean():.4f}, Std: {arr.std():.4f}")
+        
+        return arr, failed
     
-    embeddings_array = np.array(embeddings)
+    # Train
+    train_start = time.time()
+    train_embeddings, train_failed = extract_embeddings(df_train, "train")
+    train_time = time.time() - train_start
     
-    print(f"\n✓ Extracted {len(embeddings)} embeddings")
-    print(f"✓ Shape: {embeddings_array.shape}")
-    print(f"✓ Failed: {len(failed_indices)} ({len(failed_indices)/len(df)*100:.2f}%)")
-    print(f"✓ Mean: {embeddings_array.mean():.4f}")
-    print(f"✓ Std: {embeddings_array.std():.4f}")
+    np.save('train_marqo_embeddings.npy', train_embeddings)
+    log(f"✓ Saved train_marqo_embeddings.npy")
+    log(f"✓ Time: {train_time:.1f}s ({train_time/len(df_train):.3f}s per image)\n")
     
-    return embeddings_array, failed_indices
-
-# Extract train embeddings
-train_start = time.time()
-train_embeddings, train_failed = extract_embeddings(df_train, "train")
-train_time = time.time() - train_start
-
-# Save train embeddings
-np.save('/kaggle/working/train_marqo_embeddings.npy', train_embeddings)
-print(f"✓ Saved to train_marqo_embeddings.npy")
-print(f"✓ Train extraction time: {train_time:.1f}s ({train_time/len(df_train):.2f}s per image)")
-
-# Extract test embeddings
-test_start = time.time()
-test_embeddings, test_failed = extract_embeddings(df_test, "test")
-test_time = time.time() - test_start
-
-# Save test embeddings
-np.save('/kaggle/working/test_marqo_embeddings.npy', test_embeddings)
-print(f"✓ Saved to test_marqo_embeddings.npy")
-print(f"✓ Test extraction time: {test_time:.1f}s ({test_time/len(df_test):.2f}s per image)")
-
-# Phase 5: Analyze Correlations
-print("\n" + "="*80)
-print("PHASE 5: ANALYZE CORRELATIONS WITH PRICE")
-print("="*80)
-
-try:
+    # Test
+    test_start = time.time()
+    test_embeddings, test_failed = extract_embeddings(df_test, "test")
+    test_time = time.time() - test_start
+    
+    np.save('test_marqo_embeddings.npy', test_embeddings)
+    log(f"✓ Saved test_marqo_embeddings.npy")
+    log(f"✓ Time: {test_time:.1f}s ({test_time/len(df_test):.3f}s per image)\n")
+    
+    # PHASE 5: Analyze Correlations
+    log("="*80)
+    log("PHASE 5: CORRELATION ANALYSIS")
+    log("="*80)
+    
     prices = np.log1p(df_train['PRODUCT_PRICE'].values)
     
-    print("\nComputing correlations for all 1024 dimensions...")
+    log("\nComputing correlations for 1024 dimensions...")
     correlations = []
-    for dim in range(train_embeddings.shape[1]):
+    for dim in range(1024):
         corr, pval = pearsonr(train_embeddings[:, dim], prices)
         correlations.append((dim, abs(corr), pval))
     
-    # Sort by absolute correlation
     correlations.sort(key=lambda x: x[1], reverse=True)
     
-    # Statistics
-    corr_values = [c[1] for c in correlations]
-    max_corr = max(corr_values)
-    mean_corr = np.mean(corr_values)
-    median_corr = np.median(corr_values)
+    max_corr = correlations[0][1]
+    mean_corr = np.mean([c[1] for c in correlations])
     top10_mean = np.mean([c[1] for c in correlations[:10]])
     
-    print(f"\n📊 CORRELATION STATISTICS:")
-    print(f"  Max correlation:     {max_corr:.4f}")
-    print(f"  Top 10 mean:         {top10_mean:.4f}")
-    print(f"  Mean correlation:    {mean_corr:.4f}")
-    print(f"  Median correlation:  {median_corr:.4f}")
+    log(f"\n📊 STATISTICS:")
+    log(f"  Max correlation:  {max_corr:.4f}")
+    log(f"  Top 10 mean:      {top10_mean:.4f}")
+    log(f"  Mean correlation: {mean_corr:.4f}")
     
-    print(f"\n🔝 TOP 10 DIMENSIONS:")
+    log(f"\n🔝 TOP 10 DIMENSIONS:")
     for i, (dim, corr, pval) in enumerate(correlations[:10], 1):
-        print(f"  {i}. Dim {dim:4d}: corr={corr:.4f}, p={pval:.4e}")
+        log(f"  {i}. Dim {dim:4d}: corr={corr:.4f}, p={pval:.4e}")
     
-    print(f"\n📈 COMPARISON TO BASELINES:")
-    print(f"  CLIP max correlation:  0.0089")
-    print(f"  Text max correlation:  0.1089")
-    print(f"  Marqo max:            {max_corr:.4f}")
-    print(f"  ")
+    log(f"\n📈 COMPARISON:")
+    log(f"  CLIP (baseline):  0.0089")
+    log(f"  Text (baseline):  0.1089")
+    log(f"  Marqo (this run): {max_corr:.4f}")
+    log(f"  Improvement:      {(max_corr/0.0089):.1f}x over CLIP")
     
+    # VERDICT
+    log(f"\n🎯 VERDICT:")
     if max_corr > 0.05:
-        improvement = (max_corr / 0.0089 - 1) * 100
-        print(f"  ✅ MARQO IS {improvement:.1f}% BETTER THAN CLIP!")
+        log(f"  ✅ SUCCESS! Marqo embeddings are significantly better.")
+        log(f"  Expected SMAPE improvement: 5-8%")
+        log(f"  Next: Train model with these features")
+        verdict = "SUCCESS"
     elif max_corr > 0.02:
-        print(f"  ⚠️  Moderate improvement over CLIP")
+        log(f"  ⚠️  MODERATE improvement. Worth testing.")
+        log(f"  Expected SMAPE improvement: 2-4%")
+        log(f"  Next: Test in ensemble model")
+        verdict = "MODERATE"
     else:
-        print(f"  ❌ Still weak correlation (may not help much)")
+        log(f"  ❌ WEAK signal. Consider alternatives.")
+        log(f"  Next: Try aesthetic scorer or image metadata")
+        verdict = "WEAK"
+    
+    # Summary
+    total_time = time.time() - start_time
+    log(f"\n" + "="*80)
+    log(f"EXECUTION SUMMARY")
+    log(f"="*80)
+    log(f"Total time: {total_time:.1f}s ({total_time/60:.1f} min)")
+    log(f"Device: {device}")
+    log(f"PyTorch: {torch.__version__}")
+    log(f"Max correlation: {max_corr:.4f}")
+    log(f"Verdict: {verdict}")
+    log(f"\n✅ COMPLETED at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    log("```")
+    log("\n---\n")
+    log("## Next Steps")
+    log(f"1. Push this file: `git add KAGGLE_RUN_RESULTS.md && git commit -m 'Marqo results' && git push`")
+    if max_corr > 0.02:
+        log(f"2. Download embeddings: `train_marqo_embeddings.npy`, `test_marqo_embeddings.npy`")
+    log(f"3. Wait for Phase 2 training script based on these results")
+    
+    log_file.close()
+    
+    print(f"✅ SUCCESS - Max correlation: {max_corr:.4f} (Verdict: {verdict})")
+    print(f"   Check KAGGLE_RUN_RESULTS.md for full details")
     
 except Exception as e:
-    print(f"✗ Correlation analysis failed: {e}")
-    traceback.print_exc()
-
-# Phase 6: Final Summary
-print("\n" + "="*80)
-print("PHASE 6: FINAL SUMMARY")
-print("="*80)
-
-total_time = time.time() - start_time
-
-print(f"\n📊 EXECUTION SUMMARY:")
-print(f"  Total time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
-print(f"  Device: {device}")
-print(f"  Train samples: {len(df_train):,}")
-print(f"  Test samples: {len(df_test):,}")
-print(f"  Embedding dim: 1024")
-
-print(f"\n📈 KEY METRICS:")
-print(f"\n📈 KEY METRICS:")
-print(f"  Max correlation: {max_corr:.4f}")
-print(f"  CLIP baseline: 0.0089")
-print(f"  Improvement: {(max_corr / 0.0089):.1f}x")
-
-print(f"\n📁 OUTPUT FILES:")
-print(f"  ✓ train_marqo_embeddings.npy ({train_embeddings.nbytes / 1024 / 1024:.1f} MB)")
-print(f"  ✓ test_marqo_embeddings.npy ({test_embeddings.nbytes / 1024 / 1024:.1f} MB)")
-print(f"  ✓ KAGGLE_RUN_RESULTS.md (this file)")
-
-print(f"\n🎯 VERDICT:")
-if max_corr > 0.05:
-    print(f"  ✅ SUCCESS! Use these embeddings in training.")
-    print(f"  Expected improvement: 5-8% SMAPE reduction")
-    print(f"  Target: 50-52% SMAPE (from 57.75%)")
-elif max_corr > 0.02:
-    print(f"  ⚠️  MODERATE. Worth testing in model.")
-    print(f"  Expected improvement: 2-4% SMAPE reduction")
-else:
-    print(f"  ❌ WEAK SIGNAL. Try alternative approaches.")
-    print(f"  Consider: aesthetic scorer or image metadata")
-
-print(f"\n✅ SCRIPT COMPLETED at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print("```")
-print()
-print("---")
-print()
-print("## Next Steps")
-print()
-if max_corr > 0.02:
-    print("1. Download `train_marqo_embeddings.npy` and `test_marqo_embeddings.npy`")
-    print("2. Push this file to GitHub: `git add KAGGLE_RUN_RESULTS.md && git commit -m 'Marqo results' && git push`")
-    print("3. Wait for Phase 2 training script")
-else:
-    print("1. Push this file to GitHub: `git add KAGGLE_RUN_RESULTS.md && git commit -m 'Marqo results' && git push`")
-    print("2. Discuss alternative image feature strategies")
-
-# Close tee output
-sys.stdout = original_stdout
-sys.stderr = original_stderr
-results_file.close()
-
-print(f"\n✅ Results saved to /kaggle/working/KAGGLE_RUN_RESULTS.md")
-print(f"Download this file and push to GitHub!")
+    error_phase = "UNKNOWN"
+    if 'packages' in str(e).lower() or 'install' in str(e).lower():
+        error_phase = "INSTALL"
+    elif 'load' in str(e).lower() or 'csv' in str(e).lower():
+        error_phase = "DATA_LOAD"
+    elif 'model' in str(e).lower() or 'marqo' in str(e).lower():
+        error_phase = "MODEL_LOAD"
+    elif 'extract' in str(e).lower() or 'embedding' in str(e).lower():
+        error_phase = "EXTRACTION"
+    else:
+        error_phase = "CORRELATION"
+    
+    log(f"\n❌ FAILED at phase: {error_phase}")
+    log(f"Error: {e}")
+    log(f"\nFull traceback:")
+    log(traceback.format_exc())
+    log(f"\n```")
+    
+    log_file.close()
+    
+    print(f"❌ FAILED at {error_phase}")
+    print(f"   Error: {str(e)[:100]}")
+    print(f"   Check KAGGLE_RUN_RESULTS.md for full traceback")
+    sys.exit(1)
