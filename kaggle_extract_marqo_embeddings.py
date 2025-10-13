@@ -1,35 +1,7 @@
 #!/usr/bin/env python3
 """
 KAGGLE PHASE 1: Extract Marqo E-commerce Image Embeddings
-
-All output goes to KAGGLE_RUN_RESULTS.md
-Console only shows: ✅ SUCCESS or ❌ FAILED <phase>
-"""
-
-import os
-import sys
-import time
-import subprocess
-from datetime import datetime
-import traceback
-import warnings
-
-# Suppress warnings
-warnings.filterwarnings('ignore')
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow warnings
-os.environ['PYTHONWARNINGS'] = 'ignore'
-
-# Open results file
-log_file = open('KAGGLE_RUN_RESULTS.md', 'w', buffering=1)
-
-def print(msg):
-    log_file.write(msg + '\n')
-    log_file.flush()
-
-# Start
-#!/usr/bin/env python3
-"""
-KAGGLE PHASE 1: Extract Marqo E-commerce Image Embeddings
+All output to stdout/stderr (console)
 """
 
 import os
@@ -43,6 +15,7 @@ import warnings
 # Suppress warnings
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['PYTHONWARNINGS'] = 'ignore'
 
 print("="*80)
 print("KAGGLE: Marqo E-commerce Image Embedding Extraction")
@@ -104,11 +77,11 @@ try:
     model_name = 'Marqo/marqo-ecommerce-embeddings-L'
     print(f"Loading {model_name} (652M params)...")
     
-    # Load with device_map="auto" to avoid meta tensor issues
+    # Load with FP16 to avoid meta tensor issues
     model = AutoModel.from_pretrained(
         model_name, 
         trust_remote_code=True,
-        torch_dtype=torch.float16,  # Use FP16 to save memory
+        torch_dtype=torch.float16,
         low_cpu_mem_usage=True
     )
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
@@ -148,7 +121,7 @@ try:
                 embeddings.append(np.zeros(1024))
                 failed.append(idx)
                 if len(failed) <= 5:
-                    print(f"  Failed idx {idx}: {str(e)[:50]}")
+                    print(f"  Failed idx {idx}: {str(e)[:50]}", file=sys.stderr)
             
             if (idx + 1) % 1000 == 0:
                 print(f"  Processed {idx+1:,}/{len(df):,}...")
@@ -257,10 +230,10 @@ except Exception as e:
     else:
         error_phase = "CORRELATION"
     
-    print(f"\n" + "="*80)
-    print(f"❌ FAILED at phase: {error_phase}")
-    print(f"="*80)
-    print(f"Error: {e}")
-    print(f"\nFull traceback:")
-    print(traceback.format_exc())
+    print(f"\n" + "="*80, file=sys.stderr)
+    print(f"❌ FAILED at phase: {error_phase}", file=sys.stderr)
+    print(f"="*80, file=sys.stderr)
+    print(f"Error: {e}", file=sys.stderr)
+    print(f"\nFull traceback:", file=sys.stderr)
+    print(traceback.format_exc(), file=sys.stderr)
     sys.exit(1)
