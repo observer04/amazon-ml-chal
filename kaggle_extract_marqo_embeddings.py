@@ -22,34 +22,51 @@ os.environ['PYTHONWARNINGS'] = 'ignore'
 # Open results file
 log_file = open('KAGGLE_RUN_RESULTS.md', 'w', buffering=1)
 
-def log(msg):
+def print(msg):
     log_file.write(msg + '\n')
     log_file.flush()
 
 # Start
-log("# KAGGLE RUN RESULTS: Marqo Embedding Extraction")
-log(f"**Started:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-log("```")
+#!/usr/bin/env python3
+"""
+KAGGLE PHASE 1: Extract Marqo E-commerce Image Embeddings
+"""
+
+import os
+import sys
+import time
+import subprocess
+from datetime import datetime
+import traceback
+import warnings
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+print("="*80)
+print("KAGGLE: Marqo E-commerce Image Embedding Extraction")
+print("="*80)
 
 start_time = time.time()
 
 try:
     # PHASE 1: Install
-    log("\n" + "="*80)
-    log("PHASE 1: INSTALL PACKAGES")
-    log("="*80)
+    print("\n" + "="*80)
+    print("PHASE 1: INSTALL PACKAGES")
+    print("="*80)
     
     packages = ['transformers', 'torch', 'torchvision', 'pillow', 'accelerate', 
                 'sentencepiece', 'protobuf', 'scipy', 'ftfy', 'open_clip_torch']
     
     for pkg in packages:
-        log(f"Installing {pkg}...")
+        print(f"Installing {pkg}...")
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "-q", pkg],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE
+            stderr=subprocess.DEVNULL
         )
-    log("✓ All packages installed\n")
+    print("✓ All packages installed\n")
     
     # Import
     import torch
@@ -62,59 +79,58 @@ try:
     from scipy.stats import pearsonr
     
     # PHASE 2: Load Data
-    log("="*80)
-    log("PHASE 2: LOAD DATA")
-    log("="*80)
+    print("="*80)
+    print("PHASE 2: LOAD DATA")
+    print("="*80)
     
     try:
         df_train = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/train.csv')
         df_test = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/test.csv')
-        log(f"✓ Loaded from /kaggle/working/amazon-ml-chal/dataset/")
+        print(f"✓ Loaded from /kaggle/working/amazon-ml-chal/dataset/")
     except:
         df_train = pd.read_csv('dataset/train.csv')
         df_test = pd.read_csv('dataset/test.csv')
-        log(f"✓ Loaded from dataset/")
+        print(f"✓ Loaded from dataset/")
     
-    log(f"✓ Train: {len(df_train):,} samples")
-    log(f"✓ Test: {len(df_test):,} samples\n")
+    print(f"✓ Train: {len(df_train):,} samples")
+    print(f"✓ Test: {len(df_test):,} samples\n")
     
     # PHASE 3: Load Model
-    log("="*80)
-    log("PHASE 3: LOAD MARQO MODEL")
-    log("="*80)
+    print("="*80)
+    print("PHASE 3: LOAD MARQO MODEL")
+    print("="*80)
     
     model_start = time.time()
     model_name = 'Marqo/marqo-ecommerce-embeddings-L'
-    log(f"Loading {model_name} (652M params)...")
+    print(f"Loading {model_name} (652M params)...")
     
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    # Load model directly to device to avoid meta tensor issues
+    # Load with device_map="auto" to avoid meta tensor issues
     model = AutoModel.from_pretrained(
         model_name, 
         trust_remote_code=True,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-        device_map=None  # Don't use device_map to avoid meta tensors
+        torch_dtype=torch.float16,  # Use FP16 to save memory
+        low_cpu_mem_usage=True
     )
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     
-    # Move to device after loading
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Moving model to {device}...")
     model = model.to(device)
     model.eval()
     
-    log(f"✓ Model loaded on {device}")
-    log(f"✓ Load time: {time.time() - model_start:.1f}s\n")
+    print(f"✓ Model loaded on {device}")
+    print(f"✓ Load time: {time.time() - model_start:.1f}s\n")
     
     # PHASE 4: Extract Embeddings
-    log("="*80)
-    log("PHASE 4: EXTRACT IMAGE EMBEDDINGS")
-    log("="*80)
+    print("="*80)
+    print("PHASE 4: EXTRACT IMAGE EMBEDDINGS")
+    print("="*80)
     
     def extract_embeddings(df, split_name):
         embeddings = []
         failed = []
         
-        log(f"\nProcessing {len(df):,} {split_name} images...")
+        print(f"\nProcessing {len(df):,} {split_name} images...")
         
         for idx, row in df.iterrows():
             try:
@@ -132,15 +148,15 @@ try:
                 embeddings.append(np.zeros(1024))
                 failed.append(idx)
                 if len(failed) <= 5:
-                    log(f"  Failed idx {idx}: {str(e)[:50]}")
+                    print(f"  Failed idx {idx}: {str(e)[:50]}")
             
             if (idx + 1) % 1000 == 0:
-                log(f"  Processed {idx+1:,}/{len(df):,}...")
+                print(f"  Processed {idx+1:,}/{len(df):,}...")
         
         arr = np.array(embeddings)
-        log(f"✓ Shape: {arr.shape}")
-        log(f"✓ Failed: {len(failed)} ({len(failed)/len(df)*100:.2f}%)")
-        log(f"✓ Mean: {arr.mean():.4f}, Std: {arr.std():.4f}")
+        print(f"✓ Shape: {arr.shape}")
+        print(f"✓ Failed: {len(failed)} ({len(failed)/len(df)*100:.2f}%)")
+        print(f"✓ Mean: {arr.mean():.4f}, Std: {arr.std():.4f}")
         
         return arr, failed
     
@@ -150,8 +166,8 @@ try:
     train_time = time.time() - train_start
     
     np.save('train_marqo_embeddings.npy', train_embeddings)
-    log(f"✓ Saved train_marqo_embeddings.npy")
-    log(f"✓ Time: {train_time:.1f}s ({train_time/len(df_train):.3f}s per image)\n")
+    print(f"✓ Saved train_marqo_embeddings.npy")
+    print(f"✓ Time: {train_time:.1f}s ({train_time/len(df_train):.3f}s per image)\n")
     
     # Test
     test_start = time.time()
@@ -159,17 +175,17 @@ try:
     test_time = time.time() - test_start
     
     np.save('test_marqo_embeddings.npy', test_embeddings)
-    log(f"✓ Saved test_marqo_embeddings.npy")
-    log(f"✓ Time: {test_time:.1f}s ({test_time/len(df_test):.3f}s per image)\n")
+    print(f"✓ Saved test_marqo_embeddings.npy")
+    print(f"✓ Time: {test_time:.1f}s ({test_time/len(df_test):.3f}s per image)\n")
     
     # PHASE 5: Analyze Correlations
-    log("="*80)
-    log("PHASE 5: CORRELATION ANALYSIS")
-    log("="*80)
+    print("="*80)
+    print("PHASE 5: CORRELATION ANALYSIS")
+    print("="*80)
     
     prices = np.log1p(df_train['PRODUCT_PRICE'].values)
     
-    log("\nComputing correlations for 1024 dimensions...")
+    print("\nComputing correlations for 1024 dimensions...")
     correlations = []
     for dim in range(1024):
         corr, pval = pearsonr(train_embeddings[:, dim], prices)
@@ -181,85 +197,70 @@ try:
     mean_corr = np.mean([c[1] for c in correlations])
     top10_mean = np.mean([c[1] for c in correlations[:10]])
     
-    log(f"\n📊 STATISTICS:")
-    log(f"  Max correlation:  {max_corr:.4f}")
-    log(f"  Top 10 mean:      {top10_mean:.4f}")
-    log(f"  Mean correlation: {mean_corr:.4f}")
+    print(f"\n📊 STATISTICS:")
+    print(f"  Max correlation:  {max_corr:.4f}")
+    print(f"  Top 10 mean:      {top10_mean:.4f}")
+    print(f"  Mean correlation: {mean_corr:.4f}")
     
-    log(f"\n🔝 TOP 10 DIMENSIONS:")
+    print(f"\n🔝 TOP 10 DIMENSIONS:")
     for i, (dim, corr, pval) in enumerate(correlations[:10], 1):
-        log(f"  {i}. Dim {dim:4d}: corr={corr:.4f}, p={pval:.4e}")
+        print(f"  {i}. Dim {dim:4d}: corr={corr:.4f}, p={pval:.4e}")
     
-    log(f"\n📈 COMPARISON:")
-    log(f"  CLIP (baseline):  0.0089")
-    log(f"  Text (baseline):  0.1089")
-    log(f"  Marqo (this run): {max_corr:.4f}")
-    log(f"  Improvement:      {(max_corr/0.0089):.1f}x over CLIP")
+    print(f"\n📈 COMPARISON:")
+    print(f"  CLIP (baseline):  0.0089")
+    print(f"  Text (baseline):  0.1089")
+    print(f"  Marqo (this run): {max_corr:.4f}")
+    print(f"  Improvement:      {(max_corr/0.0089):.1f}x over CLIP")
     
     # VERDICT
-    log(f"\n🎯 VERDICT:")
+    print(f"\n🎯 VERDICT:")
     if max_corr > 0.05:
-        log(f"  ✅ SUCCESS! Marqo embeddings are significantly better.")
-        log(f"  Expected SMAPE improvement: 5-8%")
-        log(f"  Next: Train model with these features")
+        print(f"  ✅ SUCCESS! Marqo embeddings are significantly better.")
+        print(f"  Expected SMAPE improvement: 5-8%")
+        print(f"  Next: Train model with these features")
         verdict = "SUCCESS"
     elif max_corr > 0.02:
-        log(f"  ⚠️  MODERATE improvement. Worth testing.")
-        log(f"  Expected SMAPE improvement: 2-4%")
-        log(f"  Next: Test in ensemble model")
+        print(f"  ⚠️  MODERATE improvement. Worth testing.")
+        print(f"  Expected SMAPE improvement: 2-4%")
+        print(f"  Next: Test in ensemble model")
         verdict = "MODERATE"
     else:
-        log(f"  ❌ WEAK signal. Consider alternatives.")
-        log(f"  Next: Try aesthetic scorer or image metadata")
+        print(f"  ❌ WEAK signal. Consider alternatives.")
+        print(f"  Next: Try aesthetic scorer or image metadata")
         verdict = "WEAK"
     
     # Summary
     total_time = time.time() - start_time
-    log(f"\n" + "="*80)
-    log(f"EXECUTION SUMMARY")
-    log(f"="*80)
-    log(f"Total time: {total_time:.1f}s ({total_time/60:.1f} min)")
-    log(f"Device: {device}")
-    log(f"PyTorch: {torch.__version__}")
-    log(f"Max correlation: {max_corr:.4f}")
-    log(f"Verdict: {verdict}")
-    log(f"\n✅ COMPLETED at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    log("```")
-    log("\n---\n")
-    log("## Next Steps")
-    log(f"1. Push this file: `git add KAGGLE_RUN_RESULTS.md && git commit -m 'Marqo results' && git push`")
-    if max_corr > 0.02:
-        log(f"2. Download embeddings: `train_marqo_embeddings.npy`, `test_marqo_embeddings.npy`")
-    log(f"3. Wait for Phase 2 training script based on these results")
-    
-    log_file.close()
-    
+    print(f"\n" + "="*80)
+    print(f"EXECUTION SUMMARY")
+    print(f"="*80)
+    print(f"Total time: {total_time:.1f}s ({total_time/60:.1f} min)")
+    print(f"Device: {device}")
+    print(f"PyTorch: {torch.__version__}")
+    print(f"Max correlation: {max_corr:.4f}")
+    print(f"Verdict: {verdict}")
+    print(f"\n✅ COMPLETED at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("\n" + "="*80)
     print(f"✅ SUCCESS - Max correlation: {max_corr:.4f} (Verdict: {verdict})")
-    print(f"   Check KAGGLE_RUN_RESULTS.md for full details")
+    print("="*80)
     
 except Exception as e:
     error_phase = "UNKNOWN"
-    if 'packages' in str(e).lower() or 'install' in str(e).lower():
+    if 'install' in str(e).lower():
         error_phase = "INSTALL"
-    elif 'load' in str(e).lower() or 'csv' in str(e).lower():
+    elif 'csv' in str(e).lower() or 'dataframe' in str(e).lower():
         error_phase = "DATA_LOAD"
     elif 'model' in str(e).lower() or 'marqo' in str(e).lower():
         error_phase = "MODEL_LOAD"
-    elif 'extract' in str(e).lower() or 'embedding' in str(e).lower():
+    elif 'extract' in str(e).lower() or 'image' in str(e).lower():
         error_phase = "EXTRACTION"
     else:
         error_phase = "CORRELATION"
     
-    log(f"\n❌ FAILED at phase: {error_phase}")
-    log(f"Error: {e}")
-    log(f"\nFull traceback:")
-    log(traceback.format_exc())
-    log(f"\n```")
-    
-    log_file.close()
-    
-    print(f"❌ FAILED at {error_phase}")
-    print(f"   Error: {str(e)[:100]}")
-    print(f"   Check KAGGLE_RUN_RESULTS.md for full traceback")
+    print(f"\n" + "="*80)
+    print(f"❌ FAILED at phase: {error_phase}")
+    print(f"="*80)
+    print(f"Error: {e}")
+    print(f"\nFull traceback:")
+    print(traceback.format_exc())
     sys.exit(1)
