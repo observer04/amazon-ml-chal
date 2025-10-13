@@ -77,21 +77,60 @@ try:
     model_name = 'Marqo/marqo-ecommerce-embeddings-L'
     print(f"Loading {model_name} (652M params)...")
     
-    # Load with FP16 to avoid meta tensor issues
-    model = AutoModel.from_pretrained(
-        model_name, 
-        trust_remote_code=True,
-        torch_dtype=torch.float16,
-        low_cpu_mem_usage=True
-    )
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-    
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Moving model to {device}...")
-    model = model.to(device)
+    print(f"Target device: {device}")
+    
+    # Strategy 1: Try loading directly to device
+    try:
+        print("Attempting direct load to device...")
+        model = AutoModel.from_pretrained(
+            model_name, 
+            trust_remote_code=True,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+            device_map=device
+        )
+        print("✓ Direct load successful")
+    except:
+        # Strategy 2: Load to CPU first, then move
+        print("Direct load failed, trying CPU first...")
+        try:
+            model = AutoModel.from_pretrained(
+                model_name, 
+                trust_remote_code=True,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32
+            )
+            print(f"✓ Loaded to CPU, moving to {device}...")
+            model = model.to(device)
+            print(f"✓ Moved to {device}")
+        except:
+            # Strategy 3: Use to_empty() for meta tensors
+            print("Standard load failed, using to_empty() approach...")
+            with torch.device('meta'):
+                model = AutoModel.from_pretrained(
+                    model_name,
+                    trust_remote_code=True
+                )
+            
+            # Materialize model on target device
+            empty_model = model.to_empty(device=device)
+            
+            # Load state dict directly
+            print("Loading state dict...")
+            from transformers import AutoConfig
+            config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            model = AutoModel.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                config=config,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                low_cpu_mem_usage=False
+            ).to(device)
+            print("✓ Loaded via state dict")
+    
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     model.eval()
     
-    print(f"✓ Model loaded on {device}")
+    print(f"✓ Model ready on {device}")
     print(f"✓ Load time: {time.time() - model_start:.1f}s\n")
     
     # PHASE 4: Extract Embeddings
