@@ -1,14 +1,28 @@
 #!/bin/bash
-# Auto-switch script: Try Marqo-ecommerce, fallback to FashionSigLIP
+# Auto-switch script: Try Marqo-OpenCLIP, fallback to Marqo-transformers, then others
 
 echo "=================================================================================="
-echo "AUTO-SWITCH: Marqo-ecommerce → FashionSigLIP fallback"
+echo "AUTO-SWITCH: Marqo-OpenCLIP → Marqo-Transformers → FashionSigLIP → Google SigLIP"
 echo "=================================================================================="
 echo
 
-echo "🔄 STEP 1: Testing Marqo-ecommerce model..."
-echo "Command: python kaggle_extract_marqo_embeddings.py"
+echo "🔄 STEP 1: Testing Marqo-ecommerce with OpenCLIP (PROPER WAY)..."
+echo "Command: python kaggle_marqo_openclip_fixed.py"
 echo
+
+# Try Marqo-ecommerce with OpenCLIP first (the correct way)
+if python kaggle_marqo_openclip_fixed.py; then
+    echo
+    echo "✅ SUCCESS: Marqo-ecommerce with OpenCLIP worked!"
+    echo "Embeddings saved as outputs/train_marqo_ecommerce_openclip_embeddings.npy"
+    echo "and outputs/test_marqo_ecommerce_openclip_embeddings.npy"
+    exit 0
+else
+    echo
+    echo "❌ FAILED: Marqo-OpenCLIP failed"
+    echo "🔄 STEP 2: Trying Marqo-ecommerce with transformers..."
+    echo "Command: python kaggle_extract_marqo_embeddings.py"
+    echo
 
 # Try Marqo-ecommerce first
 if python kaggle_extract_marqo_embeddings.py; then
