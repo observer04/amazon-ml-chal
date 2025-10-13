@@ -26,11 +26,12 @@ import requests
 from io import BytesIO
 import open_clip
 import torch
-from tqdm import tqdm
 import sys
+import concurrent.futures
+import shutil
 
 print("="*80)
-print("FIXED: Marqo E-commerce with OpenCLIP (No Meta Tensors)")
+print("OPTIMIZED: Marqo E-commerce with OpenCLIP (Batch Download)")
 print("="*80)
 
 # Configuration
@@ -53,6 +54,110 @@ def download_image(url, timeout=5, max_retries=2):
             continue
     return None
 
+# Configuration
+MODEL_NAME = "hf-hub:Marqo/marqo-ecommerce-embeddings-L"
+BATCH_SIZE = 32
+EMBEDDING_DIM = 1024  # Marqo-L has 1024-dim embeddings
+MAX_IMAGES = None  # None = process all images
+
+def download_all_images(df, image_dir, split_name):
+    """Download all images to disk first for faster processing."""
+    import os
+    import concurrent.futures
+
+    print(f"\n{'='*80}")
+    print(f"DOWNLOADING ALL {split_name.upper()} IMAGES TO DISK")
+    print(f"{'='*80}")
+
+    # Create image directory
+    os.makedirs(image_dir, exist_ok=True)
+
+    # Track download results
+    downloaded = []
+    failed = []
+
+    def download_single_image(args):
+        """Download a single image."""
+        idx, row = args
+        image_path = os.path.join(image_dir, f"{idx}.jpg")
+
+        # Skip if already downloaded
+        if os.path.exists(image_path):
+            return idx, True, "already_exists"
+
+        # Download image
+        img = download_image(row['image_link'])
+        if img is not None:
+            try:
+                img.save(image_path, 'JPEG', quality=85)  # Compress to save space
+                return idx, True, "downloaded"
+            except Exception as e:
+                return idx, False, f"save_error: {str(e)}"
+        else:
+            return idx, False, "download_failed"
+
+    # Download with parallel processing (4 cores)
+    print(f"Downloading {len(df)} images using 4 parallel workers...")
+    print(f"Target directory: {image_dir}")
+    print(f"Estimated space needed: ~{len(df) * 50 / 1024:.1f} MB (compressed JPEG)")
+    print()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        # Submit all downloads
+        futures = [executor.submit(download_single_image, (idx, row))
+                  for idx, row in df.iterrows()]
+
+        # Progress tracking
+        completed = 0
+        for future in concurrent.futures.as_completed(futures):
+            idx, success, reason = future.result()
+            completed += 1
+            if success:
+                downloaded.append(idx)
+            else:
+                failed.append((idx, reason))
+
+            # Progress update every 100 images
+            if completed % 100 == 0:
+                success_rate = len(downloaded) / completed * 100
+                print(f"Progress: {completed}/{len(df)} | Success: {len(downloaded)} ({success_rate:.1f}%) | Failed: {len(failed)}")
+
+    # Summary
+    success_rate = len(downloaded) / len(df) * 100
+    print(f"\n{'='*80}")
+    print(f"DOWNLOAD SUMMARY: {split_name.upper()}")
+    print(f"{'='*80}")
+    print(f"Total images: {len(df)}")
+    print(f"Downloaded: {len(downloaded)} ({success_rate:.1f}%)")
+    print(f"Failed: {len(failed)} ({100-success_rate:.1f}%)")
+    print(f"Disk space used: ~{len(downloaded) * 50 / 1024:.1f} MB")
+
+    if failed:
+        print(f"\nFirst 5 failures:")
+        for idx, reason in failed[:5]:
+            print(f"  Image {idx}: {reason}")
+
+    print(f"{'='*80}")
+    return downloaded, failed
+
+def load_image_from_disk(image_path):
+    """Load image from local disk."""
+    try:
+        return Image.open(image_path).convert('RGB')
+    except Exception as e:
+        return None
+
+def cleanup_image_directory(image_dir):
+    """Remove all images from disk to free space."""
+    import shutil
+
+    print(f"\nCleaning up: {image_dir}")
+    if os.path.exists(image_dir):
+        shutil.rmtree(image_dir)
+        print("✅ Disk space freed")
+    else:
+        print("⚠️ Directory not found")
+
 def extract_embeddings_batch(images, model, preprocess, tokenizer, device):
     """Extract embeddings for a batch of images using OpenCLIP."""
     try:
@@ -74,10 +179,10 @@ def extract_embeddings_batch(images, model, preprocess, tokenizer, device):
         print(f"Batch processing error: {e}")
         return None
 
-def process_dataset(csv_path, output_path, model, preprocess, tokenizer, device):
-    """Process entire dataset and extract embeddings."""
+def process_dataset_optimized(csv_path, output_path, model, preprocess, tokenizer, device):
+    """Process entire dataset with optimized batch download approach."""
     print(f"\n{'='*80}")
-    print(f"Processing: {csv_path}")
+    print(f"PROCESSING: {csv_path}")
     print(f"{'='*80}")
 
     # Load data
@@ -86,7 +191,24 @@ def process_dataset(csv_path, output_path, model, preprocess, tokenizer, device)
     df = df.head(n_samples)
 
     print(f"Total samples: {n_samples}")
+    print(f"Strategy: Download all → Process all → Cleanup")
     print()
+
+    # Create temporary image directory
+    split_name = 'train' if 'train' in csv_path else 'test'
+    image_dir = f'/tmp/{split_name}_images'
+
+    # PHASE 1: Download all images first
+    downloaded, failed = download_all_images(df, image_dir, split_name)
+
+    if len(downloaded) == 0:
+        print("❌ No images downloaded, cannot proceed")
+        return None, 0, len(df)
+
+    # PHASE 2: Process downloaded images
+    print(f"\n{'='*80}")
+    print(f"PHASE 2: EXTRACTING EMBEDDINGS FROM DISK")
+    print(f"{'='*80}")
 
     # Initialize embeddings array
     embeddings = np.zeros((n_samples, EMBEDDING_DIM), dtype=np.float32)
@@ -95,45 +217,49 @@ def process_dataset(csv_path, output_path, model, preprocess, tokenizer, device)
     batch_images = []
     batch_indices = []
     successful = 0
-    failed = 0
+    processed = 0
 
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Extracting embeddings"):
-        # Download image
-        img = download_image(row['image_link'])
+    for i, idx in enumerate(df.index[:n_samples]):
+        image_path = os.path.join(image_dir, f"{idx}.jpg")
+
+        # Load from disk
+        img = load_image_from_disk(image_path)
 
         if img is not None:
             batch_images.append(img)
-            batch_indices.append(idx)
+            batch_indices.append(i)
 
             # Process batch when full
             if len(batch_images) == BATCH_SIZE:
                 batch_embeddings = extract_embeddings_batch(batch_images, model, preprocess, tokenizer, device)
                 if batch_embeddings is not None:
-                    for i, orig_idx in enumerate(batch_indices):
-                        embeddings[orig_idx] = batch_embeddings[i]
+                    for j, orig_idx in enumerate(batch_indices):
+                        embeddings[orig_idx] = batch_embeddings[j]
                     successful += len(batch_indices)
                 else:
-                    failed += len(batch_indices)
+                    # All failed in this batch
+                    pass
 
                 batch_images = []
                 batch_indices = []
-        else:
-            failed += 1
+                processed += BATCH_SIZE
 
-        # Progress update every 1000 images
-        if (idx + 1) % 1000 == 0:
-            success_rate = (successful / (idx + 1)) * 100
-            print(f"Progress: {idx+1}/{n_samples} | Success: {successful} ({success_rate:.1f}%) | Failed: {failed}")
+                # Progress update
+                if processed % 1000 == 0:
+                    success_rate = (successful / processed) * 100
+                    print(f"Progress: {processed}/{n_samples} | Success: {successful} ({success_rate:.1f}%)")
 
     # Process remaining images
     if batch_images:
         batch_embeddings = extract_embeddings_batch(batch_images, model, preprocess, tokenizer, device)
         if batch_embeddings is not None:
-            for i, orig_idx in enumerate(batch_indices):
-                embeddings[orig_idx] = batch_embeddings[i]
+            for j, orig_idx in enumerate(batch_indices):
+                embeddings[orig_idx] = batch_embeddings[j]
             successful += len(batch_indices)
-        else:
-            failed += len(batch_indices)
+        processed += len(batch_images)
+
+    # PHASE 3: Cleanup disk
+    cleanup_image_directory(image_dir)
 
     # Save embeddings
     np.save(output_path, embeddings)
@@ -142,14 +268,15 @@ def process_dataset(csv_path, output_path, model, preprocess, tokenizer, device)
     print(f"COMPLETED: {csv_path}")
     print(f"{'='*80}")
     print(f"Total processed: {n_samples}")
-    print(f"Successful: {successful} ({(successful/n_samples)*100:.1f}%)")
-    print(f"Failed: {failed} ({(failed/n_samples)*100:.1f}%)")
+    print(f"Downloaded: {len(downloaded)}")
+    print(f"Successful embeddings: {successful} ({(successful/n_samples)*100:.1f}%)")
+    print(f"Failed: {n_samples - successful} ({((n_samples - successful)/n_samples)*100:.1f}%)")
     print(f"Saved to: {output_path}")
     print(f"Shape: {embeddings.shape}")
     print(f"Size: {embeddings.nbytes / 1e6:.1f} MB")
     print()
 
-    return embeddings, successful, failed
+    return embeddings, successful, n_samples - successful
 
 def compute_correlations(train_embeddings, train_csv):
     """Compute correlation between embeddings and target price."""
@@ -249,18 +376,19 @@ def main():
             print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
         print()
 
-        # Process datasets
+        # Process datasets with optimized batch download
         print("\n" + "="*80)
-        print("PHASE 2: EMBEDDING EXTRACTION")
+        print("PHASE 2: OPTIMIZED EMBEDDING EXTRACTION")
+        print("Strategy: Download all → Process all → Cleanup")
         print("="*80)
 
-        train_embeddings, train_success, train_fail = process_dataset(
+        train_embeddings, train_success, train_fail = process_dataset_optimized(
             'dataset/train.csv',
             'outputs/train_marqo_ecommerce_openclip_embeddings.npy',
             model, preprocess_val, tokenizer, device
         )
 
-        test_embeddings, test_success, test_fail = process_dataset(
+        test_embeddings, test_success, test_fail = process_dataset_optimized(
             'dataset/test.csv',
             'outputs/test_marqo_ecommerce_openclip_embeddings.npy',
             model, preprocess_val, tokenizer, device
