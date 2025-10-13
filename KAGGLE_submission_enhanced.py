@@ -30,11 +30,14 @@ print("=" * 80)
 # ============================================================================
 print("\n[1/6] Loading data...")
 
-train_df = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/train_with_features.csv', low_memory=False)
-test_df = pd.read_csv('/kaggle/working/amazon-ml-chal/dataset/test.csv', low_memory=False)
+train_df = pd.read_csv('/kaggle/input/amazon-data/train_with_features.csv', low_memory=False)
+test_df = pd.read_csv('/kaggle/input/amazon-data/test_with_features.csv', low_memory=False)
 
 print(f"✓ Train: {train_df.shape}")
 print(f"✓ Test:  {test_df.shape}")
+
+# FIX: Clip extreme value outliers in test set
+test_df['value'] = test_df['value'].clip(upper=5000)
 
 # ============================================================================
 # 2. EXTRACT TEXT PCA FEATURES
@@ -42,8 +45,8 @@ print(f"✓ Test:  {test_df.shape}")
 print("\n[2/6] Extracting text PCA features...")
 
 # Load text embeddings
-train_txt_emb = np.load('/kaggle/working/amazon-ml-chal/outputs/train_text_embeddings_clip.npy')
-test_txt_emb = np.load('/kaggle/working/amazon-ml-chal/outputs/test_text_embeddings_clip.npy')
+train_txt_emb = np.load('/kaggle/input/amazon-data/train_text_embeddings_clip.npy')
+test_txt_emb = np.load('/kaggle/input/amazon-data/test_text_embeddings_clip.npy')
 
 print(f"✓ Train text embeddings: {train_txt_emb.shape}")
 print(f"✓ Test text embeddings:  {test_txt_emb.shape}")
