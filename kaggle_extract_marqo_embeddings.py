@@ -12,6 +12,12 @@ import time
 import subprocess
 from datetime import datetime
 import traceback
+import warnings
+
+# Suppress warnings
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow warnings
+os.environ['PYTHONWARNINGS'] = 'ignore'
 
 # Open results file
 log_file = open('KAGGLE_RUN_RESULTS.md', 'w', buffering=1)
@@ -81,10 +87,18 @@ try:
     model_name = 'Marqo/marqo-ecommerce-embeddings-L'
     log(f"Loading {model_name} (652M params)...")
     
-    model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Load model directly to device to avoid meta tensor issues
+    model = AutoModel.from_pretrained(
+        model_name, 
+        trust_remote_code=True,
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        device_map=None  # Don't use device_map to avoid meta tensors
+    )
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Move to device after loading
     model = model.to(device)
     model.eval()
     
