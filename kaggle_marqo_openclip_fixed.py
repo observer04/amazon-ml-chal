@@ -104,27 +104,19 @@ def download_all_images_ultra_fast(df, image_dir, split_name):
 
     download_partial = partial(download_single_image, savefolder=image_dir)
 
-    print("🚀 STARTING DOWNLOADS... (this may take a while)")
-    print("💡 Progress updates every 100 images - downloads are working even if you don't see immediate output")
-    print()
-
     results = []
-    with multiprocessing.Pool(32) as pool:  # Reduced from 100 to 32 for stability
+    with multiprocessing.Pool(100) as pool:
         # Use imap for better memory efficiency
         for result in pool.starmap(download_partial, df.iterrows()):
             results.append(result)
 
-            # Progress update every 100 results (more frequent)
-            if len(results) % 100 == 0:
+            # Progress update every 500 results
+            if len(results) % 500 == 0:
                 success_count = sum(1 for r in results if r.startswith("SUCCESS"))
                 skip_count = sum(1 for r in results if r.startswith("SKIP"))
                 fail_count = sum(1 for r in results if r.startswith("FAILED"))
                 success_rate = (success_count / len(results)) * 100
                 print(f"Progress: {len(results)}/{len(df)} | Success: {success_count} | Skip: {skip_count} | Fail: {fail_count} ({success_rate:.1f}%)")
-
-                # Force output flush
-                import sys
-                sys.stdout.flush()
 
     # Final summary
     success_count = sum(1 for r in results if r.startswith("SUCCESS"))
